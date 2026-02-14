@@ -4,16 +4,6 @@ set -e
 echo "🚀 Setting up Autonomous Claude Agent on Amazon Linux..."
 echo ""
 
-# Detect if running interactively or piped (e.g., curl | bash)
-if [ -t 0 ]; then
-    INTERACTIVE=true
-    echo "📝 Running in interactive mode"
-else
-    INTERACTIVE=false
-    echo "📝 Running in non-interactive mode (warnings will be auto-accepted)"
-fi
-echo ""
-
 # ============================================
 # System Requirements Check
 # ============================================
@@ -26,16 +16,8 @@ if [ -f /etc/os-release ]; then
     if [[ "$ID" != "amzn" ]]; then
         echo "⚠️  WARNING: This script is designed for Amazon Linux"
         echo "   Detected: $PRETTY_NAME"
-        if [ "$INTERACTIVE" = true ]; then
-            read -p "Continue anyway? (y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                echo "Installation cancelled."
-                exit 1
-            fi
-        else
-            echo "   (Auto-accepting in non-interactive mode)"
-        fi
+        echo "   Continuing anyway..."
+        echo ""
     else
         echo "✅ Amazon Linux detected: $PRETTY_NAME"
     fi
@@ -49,28 +31,16 @@ echo "💾 Available disk space: ${AVAILABLE_GB}GB"
 
 if [ $AVAILABLE_GB -lt 20 ]; then
     echo "❌ ERROR: Insufficient disk space!"
-    echo "   Required: At least 20GB (40GB recommended)"
+    echo "   Required: At least 20GB"
     echo "   Available: ${AVAILABLE_GB}GB"
     echo ""
-    echo "Please increase your EC2 volume size:"
-    echo "1. Stop the instance"
-    echo "2. Modify volume size (recommend 40GB)"
-    echo "3. Restart and run this script again"
+    echo "Please increase your EC2 volume size and run this script again."
     exit 1
 elif [ $AVAILABLE_GB -lt 40 ]; then
-    echo "⚠️  WARNING: Disk space is less than recommended"
+    echo "⚠️  WARNING: Disk space below recommended"
     echo "   Available: ${AVAILABLE_GB}GB (Recommended: 40GB)"
-    echo "   The agent may run out of space over time"
-    if [ "$INTERACTIVE" = true ]; then
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Installation cancelled."
-            exit 1
-        fi
-    else
-        echo "   (Auto-accepting in non-interactive mode)"
-    fi
+    echo "   Continuing anyway..."
+    echo ""
 else
     echo "✅ Sufficient disk space: ${AVAILABLE_GB}GB"
 fi
@@ -85,25 +55,16 @@ echo "🧠 Total RAM: ${TOTAL_RAM_GB}GB"
 # Require at least 1700 MB to account for kernel/BIOS reservation on 2GB instances
 if [ $TOTAL_RAM_MB -lt 1700 ]; then
     echo "❌ ERROR: Insufficient RAM!"
-    echo "   Required: At least 1.7GB total (4GB recommended)"
+    echo "   Required: At least 1.7GB total"
     echo "   Detected: ${TOTAL_RAM_GB}GB total"
     echo ""
     echo "Please use a larger EC2 instance type (t3.small or larger)"
     exit 1
 elif [ $TOTAL_RAM_MB -lt 4096 ]; then
-    echo "⚠️  WARNING: RAM is less than recommended"
-    echo "   Available: ${TOTAL_RAM_GB}GB (Recommended: 4GB)"
-    echo "   Agent performance may be limited"
-    if [ "$INTERACTIVE" = true ]; then
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Installation cancelled."
-            exit 1
-        fi
-    else
-        echo "   (Auto-accepting in non-interactive mode)"
-    fi
+    echo "⚠️  WARNING: RAM below recommended"
+    echo "   Total: ${TOTAL_RAM_GB}GB (Recommended: 4GB)"
+    echo "   Agent performance may be limited. Continuing anyway..."
+    echo ""
 else
     echo "✅ Sufficient RAM: ${TOTAL_RAM_GB}GB"
 fi
@@ -119,16 +80,8 @@ if [ $CPU_CORES -lt 1 ]; then
 elif [ $CPU_CORES -lt 2 ]; then
     echo "⚠️  WARNING: Only 1 CPU core detected"
     echo "   Recommended: 2+ cores for better performance"
-    if [ "$INTERACTIVE" = true ]; then
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Installation cancelled."
-            exit 1
-        fi
-    else
-        echo "   (Auto-accepting in non-interactive mode)"
-    fi
+    echo "   Continuing anyway..."
+    echo ""
 else
     echo "✅ Sufficient CPU: ${CPU_CORES} cores"
 fi
