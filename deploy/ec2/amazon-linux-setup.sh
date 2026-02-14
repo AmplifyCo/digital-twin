@@ -157,7 +157,11 @@ fi
 cd ~
 if [ ! -d "autonomous-claude-agent" ]; then
     echo "📥 Cloning repository..."
-    read -p "Enter GitHub repository URL: " REPO_URL
+
+    # Use environment variable if provided, otherwise use default
+    REPO_URL="${REPO_URL:-https://github.com/AmplifyCo/autonomous-claude-agent.git}"
+
+    echo "Repository: $REPO_URL"
     git clone "$REPO_URL" autonomous-claude-agent
 fi
 
