@@ -57,18 +57,18 @@ else
     echo "✅ Sufficient disk space: ${AVAILABLE_GB}GB"
 fi
 
-# Check available RAM (need at least 1.8GB, recommend 4GB)
+# Check total RAM (need at least 1.7GB total for 2GB instances, recommend 4GB)
 # Use MB for accuracy, convert to GB for display
 TOTAL_RAM_MB=$(free -m | grep Mem | awk '{print $2}')
 TOTAL_RAM_GB=$(echo "scale=1; $TOTAL_RAM_MB / 1024" | bc)
 
 echo "🧠 Total RAM: ${TOTAL_RAM_GB}GB"
 
-# Require at least 1800 MB (1.8 GB) to account for OS overhead on 2GB instances
-if [ $TOTAL_RAM_MB -lt 1800 ]; then
+# Require at least 1700 MB to account for kernel/BIOS reservation on 2GB instances
+if [ $TOTAL_RAM_MB -lt 1700 ]; then
     echo "❌ ERROR: Insufficient RAM!"
-    echo "   Required: At least 1.8GB (4GB recommended)"
-    echo "   Available: ${TOTAL_RAM_GB}GB"
+    echo "   Required: At least 1.7GB total (4GB recommended)"
+    echo "   Detected: ${TOTAL_RAM_GB}GB total"
     echo ""
     echo "Please use a larger EC2 instance type (t3.small or larger)"
     exit 1
@@ -112,7 +112,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "System Requirements Summary:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Disk Space: ${AVAILABLE_GB}GB (Minimum: 20GB, Recommended: 40GB)"
-echo "  RAM: ${TOTAL_RAM_GB}GB (Minimum: 1.8GB, Recommended: 4GB)"
+echo "  RAM: ${TOTAL_RAM_GB}GB total (Minimum: 1.7GB, Recommended: 4GB)"
 echo "  CPU Cores: ${CPU_CORES} (Minimum: 1, Recommended: 2+)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
