@@ -335,14 +335,165 @@ class AutoUpdater:
             except Exception as e:
                 logger.error(f"Error sending Telegram notification: {e}")
 
+    async def check_git_updates(self) -> bool:
+        """Check for updates from git repository and pull if available.
+
+        Returns:
+            True if updates were pulled
+        """
+        logger.info("🔍 Checking for git updates...")
+
+        try:
+            # Check if we're in a git repository
+            result = await self.bash_tool.execute("git rev-parse --git-dir", timeout=5)
+            if not result.success:
+                logger.warning("Not in a git repository, skipping git auto-update")
+                return False
+
+            # Fetch latest from remote
+            result = await self.bash_tool.execute("git fetch origin main", timeout=30)
+            if not result.success:
+                logger.error(f"Failed to fetch from git: {result.error}")
+                return False
+
+            # Check if we're behind
+            result = await self.bash_tool.execute(
+                "git rev-list HEAD..origin/main --count",
+                timeout=5
+            )
+
+            if result.success and result.output.strip() != "0":
+                commits_behind = int(result.output.strip())
+                logger.info(f"Found {commits_behind} new commits on origin/main")
+
+                await self._notify(
+                    f"📥 Found {commits_behind} new commits, pulling updates...",
+                    "info"
+                )
+
+                # Pull the updates
+                result = await self.bash_tool.execute("git pull origin main", timeout=60)
+
+                if result.success:
+                    await self._notify(
+                        f"✅ Successfully pulled {commits_behind} commits from git",
+                        "success"
+                    )
+
+                    # Check if requirements.txt changed
+                    result = await self.bash_tool.execute(
+                        "git diff HEAD@{1} HEAD -- requirements.txt",
+                        timeout=5
+                    )
+
+                    if result.success and result.output.strip():
+                        logger.info("requirements.txt changed, reinstalling dependencies...")
+                        await self._notify(
+                            "📦 requirements.txt updated, reinstalling dependencies...",
+                            "info"
+                        )
+
+                        result = await self.bash_tool.execute(
+                            "pip install -r requirements.txt --upgrade",
+                            timeout=300
+                        )
+
+                        if result.success:
+                            await self._notify("✅ Dependencies updated successfully", "success")
+                        else:
+                            await self._notify(
+                                f"⚠️ Failed to update dependencies: {result.error}",
+                                "warning"
+                            )
+
+                    return True
+                else:
+                    logger.error(f"Failed to pull updates: {result.error}")
+                    await self._notify(
+                        f"❌ Failed to pull git updates: {result.error}",
+                        "error"
+                    )
+                    return False
+            else:
+                logger.info("Repository is up-to-date")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error checking git updates: {e}", exc_info=True)
+            await self._notify(f"❌ Git update check failed: {str(e)}", "error")
+            return False
+
+    async def watch_env_file(self):
+        """Watch .env file for changes and auto-restart when modified."""
+        env_file = Path(".env")
+
+        if not env_file.exists():
+            logger.warning(".env file not found, skipping file watch")
+            return
+
+        last_modified = env_file.stat().st_mtime
+        logger.info("👀 Watching .env file for changes...")
+
+        while True:
+            try:
+                await asyncio.sleep(30)  # Check every 30 seconds
+
+                if not env_file.exists():
+                    continue
+
+                current_modified = env_file.stat().st_mtime
+
+                if current_modified != last_modified:
+                    logger.info("📝 .env file changed, restarting agent...")
+                    await self._notify(
+                        "📝 Configuration file (.env) changed, restarting agent...",
+                        "info"
+                    )
+
+                    # Update timestamp before restart
+                    last_modified = current_modified
+
+                    # Give time for notification
+                    await asyncio.sleep(2)
+
+                    # Restart the service
+                    await self._restart_agent()
+
+                    # Exit this watch loop since we're restarting
+                    break
+
+            except asyncio.CancelledError:
+                logger.info(".env file watch cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error watching .env file: {e}")
+                await asyncio.sleep(60)  # Wait before retrying
+
     async def start_background_task(self):
         """Start background task that runs daily updates."""
         logger.info("Starting auto-update background task...")
 
+        # Start .env file watcher in background
+        env_watch_task = asyncio.create_task(self.watch_env_file())
+
         while True:
             try:
-                # Run daily update check
+                # 1. Check for git updates
+                git_updates = await self.check_git_updates()
+
+                # 2. Run daily vulnerability/package update check
                 await self.run_daily_update_check()
+
+                # 3. If git updates were pulled, restart to apply them
+                if git_updates and self.auto_restart:
+                    logger.info("Git updates applied, restarting to use new code...")
+                    await self._notify(
+                        "🔄 Restarting to apply git updates...",
+                        "info"
+                    )
+                    await asyncio.sleep(2)
+                    await self._restart_agent()
+                    break  # Exit loop since we're restarting
 
                 # Wait 24 hours
                 logger.info("Next auto-update check in 24 hours")
@@ -350,6 +501,7 @@ class AutoUpdater:
 
             except asyncio.CancelledError:
                 logger.info("Auto-update task cancelled")
+                env_watch_task.cancel()
                 break
             except Exception as e:
                 logger.error(f"Error in auto-update background task: {e}")
