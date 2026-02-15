@@ -1,58 +1,54 @@
-# Core Dependencies
+# ================================================
+# CORE DEPENDENCIES - Minimal install for basic operation
+# Total size: ~500MB (no PyTorch)
+# ================================================
+
+# Core Agent Engine
 anthropic>=0.40.0
 python-dotenv>=1.0.0
-asyncio>=3.4.3
 aiofiles>=23.2.1
 
-# Multi-Channel Support
-python-telegram-bot>=21.0
-discord.py>=2.3.2
-slack-bolt>=1.18.0
-slack-sdk>=3.27.0
-
-# Computer Use & Automation
-pyautogui>=0.9.54
-pillow>=10.0.0
-mss>=9.0.1
-
-# Browser Automation
-selenium>=4.16.0
-beautifulsoup4>=4.12.0
-lxml>=5.1.0
-
-# Vector Database for Context Management
+# Brain - Vector Database (using default embeddings, no PyTorch)
 chromadb>=0.4.22
-sentence-transformers>=2.2.2
 
-# State Management & Storage
-sqlalchemy>=2.0.23
-alembic>=1.13.1
+# Monitoring & Notifications
+python-telegram-bot>=21.0
 
-# Security & Encryption
-cryptography>=41.0.7
-pyjwt>=2.8.0
-
-# Vulnerability Scanning & Auto-Update
-pip-audit>=2.6.1
-safety>=3.0.1
-
-# Web Server & API
+# Web Dashboard
 fastapi>=0.109.0
 uvicorn>=0.25.0
 websockets>=12.0
 
-# Logging & Monitoring
-structlog>=24.1.0
-prometheus-client>=0.19.0
+# Security & Auto-Update
+pip-audit>=2.6.1
+safety>=3.0.1
+cryptography>=41.0.7
+
+# Web Tools
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+requests>=2.31.0
 
 # Utilities
 pydantic>=2.5.3
 pyyaml>=6.0.1
 psutil>=5.9.7
-requests>=2.31.0
+structlog>=24.1.0
 
-# Development Dependencies (Optional)
-pytest>=7.4.3
-pytest-asyncio>=0.23.2
-black>=23.12.1
-ruff>=0.1.9
+# ================================================
+# OPTIONAL DEPENDENCIES - Install separately if needed
+# ================================================
+# For better embeddings (requires 1GB+ PyTorch):
+#   pip install sentence-transformers
+#
+# For multi-channel support:
+#   pip install discord.py slack-bolt slack-sdk
+#
+# For full browser automation:
+#   pip install selenium pillow
+#
+# For computer use automation:
+#   pip install pyautogui mss
+#
+# For development:
+#   pip install pytest pytest-asyncio black ruff
