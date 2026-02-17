@@ -207,7 +207,8 @@ class TelegramChat:
 
         elif intent.get("confidence", 0) < 0.6:
             # Low confidence - use Opus for understanding
-            logger.info(f"Low confidence ({intent.get('confidence'):.2f}) - using Opus")
+            confidence = intent.get("confidence", 0.0)
+            logger.info(f"Low confidence ({confidence:.2f}) - using Opus")
             return await self.agent.run(
                 task=f"User request via Telegram: {message}",
                 max_iterations=10,
