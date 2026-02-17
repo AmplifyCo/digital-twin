@@ -161,13 +161,16 @@ class TelegramChat:
             intent = await self._parse_intent_with_fallback(message)
 
             # Use router to determine best model for this task
+            action = intent.get("action", "unknown")
+            confidence = intent.get("confidence", 0.0)
+
             selected_model = self.router.select_model_for_task(
                 task=message,
-                intent=intent.get("action"),
-                confidence=intent.get("confidence", 0)
+                intent=action,
+                confidence=confidence
             )
 
-            logger.info(f"Intent: {intent.get('action')} (confidence: {intent.get('confidence'):.2f})")
+            logger.info(f"Intent: {action} (confidence: {confidence:.2f})")
             logger.info(f"Selected model: {selected_model}")
 
             # Try primary model first
