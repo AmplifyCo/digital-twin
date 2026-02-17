@@ -478,7 +478,7 @@ Respond only with valid JSON, no explanation."""
 
 **State:** Running
 **Uptime:** {uptime_str}
-**Model:** {self.agent.config.model}
+**Model:** {self.agent.config.default_model}
 **Mode:** {'Self-building' if self.agent.config.self_build_mode else 'Operational'}
 
 **Systems:**
