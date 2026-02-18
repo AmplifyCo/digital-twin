@@ -23,7 +23,7 @@ This guide shows the **simplified deployment process** with automated Cloudflare
 SSH into your EC2 instance and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AmplifyCo/autonomous-claude-agent/main/deploy/ec2/amazon-linux-setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AmplifyCo/digital-twin/main/deploy/ec2/amazon-linux-setup.sh | bash
 ```
 
 ### What This Does Automatically:
@@ -96,7 +96,7 @@ The script will automatically:
 ### 1. Configure .env File
 
 ```bash
-cd ~/autonomous-claude-agent
+cd ~/digital-twin
 nano .env
 ```
 
@@ -172,7 +172,7 @@ Once configured, you can chat with your agent via Telegram:
 If you skipped Cloudflare Tunnel during installation:
 
 ```bash
-cd ~/autonomous-claude-agent
+cd ~/digital-twin
 bash deploy/cloudflare/setup-tunnel.sh
 ```
 
@@ -269,9 +269,9 @@ After successful deployment:
 
 ## Support
 
-- **Issues**: https://github.com/AmplifyCo/autonomous-claude-agent/issues
-- **Logs**: `~/autonomous-claude-agent/data/logs/`
-- **Config**: `~/autonomous-claude-agent/.env`
+- **Issues**: https://github.com/AmplifyCo/digital-twin/issues
+- **Logs**: `~/digital-twin/data/logs/`
+- **Config**: `~/digital-twin/.env`
 
 ---
 

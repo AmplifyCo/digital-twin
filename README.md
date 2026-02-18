@@ -40,8 +40,8 @@
 > >
 > > - ```bash
 > >   # Clone the repository
-> >   git clone https://github.com/AmplifyCo/autonomous-claude-agent.git
-> >   cd autonomous-claude-agent
+> >   git clone https://github.com/AmplifyCo/digital-twin.git
+> >   cd digital-twin
 > >
 > >   # Create virtual environment
 > >   python -m venv venv
@@ -94,7 +94,7 @@
 > > ## 📁 Project Structure
 > >
 > > ```
-> > autonomous-claude-agent/
+> > digital-twin/
 > > ├── src/
 > > │   ├── core/
 > > │   │   ├── agent.py              # Main autonomous agent loop
@@ -223,14 +223,14 @@
 > >
 > > ```bash
 > > # Build image
-> > docker build -t autonomous-claude-agent:latest .
+> > docker build -t digital-twin:latest .
 > >
 > > # Run with environment variables
 > > docker run -d \
 > >   --name claude-agent \
 > >   -e ANTHROPIC_API_KEY=your_key \
 > >   -p 18789:18789 \
-> >   autonomous-claude-agent:latest
+> >   digital-twin:latest
 > > ```
 > >
 > > ## ☁️ AWS EC2 Deployment
@@ -242,8 +242,8 @@
 > > ssh -i your-key.pem ec2-user@your-instance-ip
 > >
 > > # Clone and setup
-> > git clone https://github.com/AmplifyCo/autonomous-claude-agent.git
-> > cd autonomous-claude-agent
+> > git clone https://github.com/AmplifyCo/digital-twin.git
+> > cd digital-twin
 > > chmod +x deploy/ec2/setup.sh
 > > ./deploy/ec2/setup.sh
 > >
@@ -463,8 +463,8 @@
 > >              
 > >               - ## 📞 Support
 > >              
-> >               - - **Issues**: [GitHub Issues](https://github.com/AmplifyCo/autonomous-claude-agent/issues)
-> >                 - - **Discussions**: [GitHub Discussions](https://github.com/AmplifyCo/autonomous-claude-agent/discussions)
+> >               - - **Issues**: [GitHub Issues](https://github.com/AmplifyCo/digital-twin/issues)
+> >                 - - **Discussions**: [GitHub Discussions](https://github.com/AmplifyCo/digital-twin/discussions)
 > >                   - - **Email**: support@example.com
 > >                    
 > >                     - ---

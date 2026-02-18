@@ -227,10 +227,10 @@ When auto-fix fails, you may need to:
 ssh ec2-user@your-instance
 
 # Check logs
-tail -f /path/to/autonomous-claude-agent/data/logs/agent.log
+tail -f /path/to/digital-twin/data/logs/agent.log
 
 # Manual fix
-cd /path/to/autonomous-claude-agent
+cd /path/to/digital-twin
 git pull
 sudo systemctl restart claude-agent
 ```
@@ -239,7 +239,7 @@ sudo systemctl restart claude-agent
 
 #### Permission Errors
 ```bash
-sudo chown -R ec2-user:ec2-user /path/to/autonomous-claude-agent
+sudo chown -R ec2-user:ec2-user /path/to/digital-twin
 chmod +x scripts/*.sh
 ```
 

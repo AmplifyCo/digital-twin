@@ -163,17 +163,17 @@ fi
 
 # Clone repository (if not already cloned)
 cd ~
-if [ ! -d "autonomous-claude-agent" ]; then
+if [ ! -d "digital-twin" ]; then
     echo "📥 Cloning repository..."
 
     # Use environment variable if provided, otherwise use default
-    REPO_URL="${REPO_URL:-https://github.com/AmplifyCo/autonomous-claude-agent.git}"
+    REPO_URL="${REPO_URL:-https://github.com/AmplifyCo/digital-twin.git}"
 
     echo "Repository: $REPO_URL"
-    git clone "$REPO_URL" autonomous-claude-agent
+    git clone "$REPO_URL" digital-twin
 fi
 
-cd autonomous-claude-agent
+cd digital-twin
 
 # Create virtual environment
 echo "🔧 Creating virtual environment..."

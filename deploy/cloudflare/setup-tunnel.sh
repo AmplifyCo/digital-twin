@@ -147,8 +147,8 @@ User=$USER
 ExecStart=/usr/local/bin/cloudflared tunnel --config $CLOUDFLARED_DIR/config.yml run $TUNNEL_NAME
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/$USER/autonomous-claude-agent/data/logs/cloudflared.log
-StandardError=append:/home/$USER/autonomous-claude-agent/data/logs/cloudflared.log
+StandardOutput=append:/home/$USER/digital-twin/data/logs/cloudflared.log
+StandardError=append:/home/$USER/digital-twin/data/logs/cloudflared.log
 
 [Install]
 WantedBy=multi-user.target
@@ -170,8 +170,8 @@ echo ""
 echo "💾 Saving tunnel URL..."
 
 # Create tunnel info file for agent to read
-mkdir -p ~/autonomous-claude-agent/data
-cat > ~/autonomous-claude-agent/data/cloudflare_tunnel.json << EOF
+mkdir -p ~/digital-twin/data
+cat > ~/digital-twin/data/cloudflare_tunnel.json << EOF
 {
   "tunnel_id": "$TUNNEL_ID",
   "tunnel_name": "$TUNNEL_NAME",
@@ -191,8 +191,8 @@ echo "📱 Setting up Telegram webhook..."
 echo ""
 
 # Check if .env exists and has Telegram token
-if [ -f ~/autonomous-claude-agent/.env ]; then
-    TELEGRAM_BOT_TOKEN=$(grep TELEGRAM_BOT_TOKEN ~/autonomous-claude-agent/.env | cut -d '=' -f2 | tr -d ' "'"'"'')
+if [ -f ~/digital-twin/.env ]; then
+    TELEGRAM_BOT_TOKEN=$(grep TELEGRAM_BOT_TOKEN ~/digital-twin/.env | cut -d '=' -f2 | tr -d ' "'"'"'')
 
     if [ ! -z "$TELEGRAM_BOT_TOKEN" ] && [ "$TELEGRAM_BOT_TOKEN" != "your_telegram_bot_token_here" ]; then
         echo "Setting up webhook with Telegram..."
