@@ -245,7 +245,7 @@ class ConversationManager:
                 self._last_model_used = "claude-sonnet-4-5"
                 return await self.agent.run(
                     task=f"User request: {message}",
-                    max_iterations=10,
+                    max_iterations=30,  # Increased from 10 to handle complex build tasks
                     system_prompt=self._build_system_prompt()
                 )
             else:
@@ -420,7 +420,10 @@ Capabilities:
 
         if any(word in msg_lower for word in ["status", "running"]):
             return {"action": "status", "confidence": 0.9, "parameters": {}}
-        elif any(word in msg_lower for word in ["build", "create"]):
+        elif any(word in msg_lower for word in [
+            "build", "create", "implement", "feature",
+            "add feature", "new feature", "develop"
+        ]):
             return {"action": "build_feature", "confidence": 0.8, "parameters": {}}
         else:
             return {"action": "unknown", "confidence": 0.3, "parameters": {}}
