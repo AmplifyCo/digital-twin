@@ -163,13 +163,35 @@ install_globally() {
         echo "✅ dt-setup installed successfully!"
         echo "   You can now run 'dt-setup' from any directory"
         echo ""
-        return 0
     else
         echo ""
         echo "❌ Installation failed. Continuing with local setup..."
         echo ""
         return 1
     fi
+
+    # Configure sudoers for systemd service management (Linux only)
+    if [[ -f /etc/os-release ]] && command -v systemctl &> /dev/null; then
+        CURRENT_USER=$(whoami)
+        SUDOERS_FILE="/etc/sudoers.d/digital-twin"
+        echo "🔐 Configuring sudo permissions for service management..."
+        sudo tee "$SUDOERS_FILE" > /dev/null << SUDOERS_EOF
+# Digital Twin - limited sudo for service management
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl status digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl start digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl stop digital-twin
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl status digital-twin
+SUDOERS_EOF
+        sudo chmod 440 "$SUDOERS_FILE"
+        echo "✅ Sudo permissions configured (systemctl for digital-twin only)"
+        echo ""
+    fi
+
+    return 0
 }
 
 # Check if running locally and not installed globally
