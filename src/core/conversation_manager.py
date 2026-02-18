@@ -662,7 +662,10 @@ Return ONLY ONE WORD: build_feature, status, question, or action"""
             "implement", "create", "build", "add", "make",
             "fix", "update", "change", "modify", "refactor",
             "delete", "remove", "write", "install", "deploy",
-            "run", "execute", "test", "debug"
+            "run", "execute", "test", "debug",
+            "post", "tweet", "send", "reply", "forward",
+            "fetch", "download", "upload", "search",
+            "check inbox", "read email", "schedule",
         ]
 
         # Question keywords
