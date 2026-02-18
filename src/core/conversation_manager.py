@@ -126,7 +126,8 @@ class ConversationManager:
         message: str,
         channel: str = "unknown",
         user_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        progress_callback=None
     ) -> str:
         """Process a message and return response.
 
@@ -137,12 +138,16 @@ class ConversationManager:
             channel: Channel name (telegram, whatsapp, discord, etc.)
             user_id: User identifier
             metadata: Additional metadata
+            progress_callback: Optional async function to call with progress updates
 
         Returns:
             Response string
         """
         try:
             logger.info(f"Processing message from {channel}: {message[:50]}...")
+
+            # Store callback for use by other methods
+            self._progress_callback = progress_callback
 
             # Try primary processing with Claude API
             response = await self._process_with_fallback(message)

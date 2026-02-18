@@ -110,29 +110,111 @@ class TelegramChannel:
             return {"ok": False, "error": str(e)}
 
     async def _process_and_respond(self, message: str, user_id: str):
-        """Process message and send response.
+        """Process message and send response with conversational updates.
 
         Args:
             message: User message
             user_id: User ID
         """
+        status_message = None
         try:
-            # Send typing indicator
-            await self.send_message("🤔 Processing...")
+            # Send initial status
+            status_message = await self.bot.send_message(
+                chat_id=self.chat_id,
+                text="💭 Thinking...",
+                parse_mode="Markdown"
+            )
+
+            # Create progress callback for conversational updates
+            async def update_progress(status: str):
+                """Update status message with conversational text."""
+                if status_message:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=self.chat_id,
+                            message_id=status_message.message_id,
+                            text=status,
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Status update skipped: {e}")
+
+            # Start a background task for periodic updates
+            update_task = asyncio.create_task(
+                self._periodic_updates(update_progress, message)
+            )
 
             # CORE INTELLIGENCE HERE (channel-agnostic)
             response = await self.conversation_manager.process_message(
                 message=message,
                 channel="telegram",
-                user_id=user_id
+                user_id=user_id,
+                progress_callback=update_progress
             )
 
-            # Send response
+            # Cancel update task
+            update_task.cancel()
+
+            # Delete status message
+            try:
+                await self.bot.delete_message(
+                    chat_id=self.chat_id,
+                    message_id=status_message.message_id
+                )
+            except:
+                pass
+
+            # Send final response
             await self.send_message(response)
 
         except Exception as e:
             logger.error(f"Process error: {e}", exc_info=True)
+            # Try to clean up status message
+            if status_message:
+                try:
+                    await self.bot.delete_message(
+                        chat_id=self.chat_id,
+                        message_id=status_message.message_id
+                    )
+                except:
+                    pass
             await self.send_message(f"❌ Error: {str(e)}")
+
+    async def _periodic_updates(self, update_callback, user_message: str):
+        """Send periodic conversational updates while processing.
+
+        Args:
+            update_callback: Function to call with status updates
+            user_message: Original user message
+        """
+        conversational_updates = [
+            "💭 Thinking...",
+            "🧠 Checking my memory...",
+            "📚 Looking into this..."
+        ]
+
+        # Determine context-specific update
+        msg_lower = user_message.lower()
+        if any(word in msg_lower for word in ["build", "implement", "create", "feature"]):
+            conversational_updates.append("🔨 Planning the implementation...")
+        elif any(word in msg_lower for word in ["read", "file", "check"]):
+            conversational_updates.append("📖 Reading files...")
+        elif any(word in msg_lower for word in ["git", "commit", "push"]):
+            conversational_updates.append("🔍 Checking git status...")
+
+        try:
+            for i, update in enumerate(conversational_updates):
+                if i == 0:
+                    await asyncio.sleep(1)  # Short delay for first update
+                else:
+                    await asyncio.sleep(3)  # 3 seconds between updates
+                await update_callback(update)
+
+            # After all updates, just wait (task will be cancelled when done)
+            await asyncio.sleep(3600)
+
+        except asyncio.CancelledError:
+            pass  # Expected when processing completes
 
     async def send_message(self, text: str):
         """Send message to Telegram.
