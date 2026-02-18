@@ -1,9 +1,8 @@
-"""Core Brain for self-building meta-agent (temporary)."""
+"""Core Brain for self-building meta-agent."""
 
 import json
 import logging
 import os
-import shutil
 from datetime import datetime
 from typing import Dict, Any, List
 from .vector_db import VectorDatabase
@@ -12,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class CoreBrain:
-    """Brain for self-building meta-agent. Temporary, purged after build complete."""
+    """Brain for self-building meta-agent. Stores build progress, patterns, and knowledge."""
 
     def __init__(self, path: str = "data/core_brain"):
         """Initialize core brain.
@@ -136,23 +135,3 @@ class CoreBrain:
             snapshot = json.load(f)
 
         logger.info(f"Imported coreBrain snapshot from {snapshot.get('export_timestamp')}")
-
-    def purge(self):
-        """Purge coreBrain after build complete."""
-        logger.info("Purging coreBrain...")
-
-        # Clear vector DB
-        self.db.clear()
-
-        # Remove directory
-        if os.path.exists(self.path):
-            shutil.rmtree(self.path)
-            logger.info(f"Removed coreBrain directory: {self.path}")
-
-        # Remove snapshot if exists
-        snapshot_path = "data/core_brain_snapshot.json"
-        if os.path.exists(snapshot_path):
-            os.remove(snapshot_path)
-            logger.info(f"Removed coreBrain snapshot: {snapshot_path}")
-
-        logger.info("coreBrain purged successfully")
