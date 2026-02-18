@@ -108,7 +108,7 @@ Works from **any directory** (like `git`, `python`, `npm`)!
 ### Start the Bot
 
 ```bash
-python -m src.main
+dt-setup start
 ```
 
 Check logs for successful tool registration:
@@ -119,7 +119,10 @@ Check logs for successful tool registration:
 
 ---
 
-**That's it!** From now on, just run `dt-setup` whenever you need to update credentials.
+**Commands you'll use:**
+- `dt-setup` - Update configuration
+- `dt-setup start` - Start the bot
+- `dt-setup email` - Update email settings
 
 ## Manual Setup
 

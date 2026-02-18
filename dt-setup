@@ -1,10 +1,12 @@
 #!/bin/bash
 # Digital Twin Setup - Complete automation
-# ONE command to: install itself, dependencies, and configure everything
+# ONE command to: install Python, dependencies, configure, and run
 #
 # Usage:
 #   ./dt-setup              # First run from repo (self-installs)
 #   dt-setup                # After install, run from anywhere
+#   dt-setup start          # Start the bot
+#   dt-setup run            # Start the bot (alias)
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +20,56 @@ if [ ! -f "$CONFIGURE_PY" ]; then
     echo "Error: configure.py not found at $CONFIGURE_PY"
     exit 1
 fi
+
+# ============================================
+# Check and install Python if needed
+# ============================================
+check_python() {
+    if ! command -v python3 &> /dev/null; then
+        echo ""
+        echo "❌ Python 3 is not installed!"
+        echo ""
+        echo "Installing Python 3..."
+        echo ""
+
+        # Detect OS and install Python
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            if command -v brew &> /dev/null; then
+                brew install python3
+            else
+                echo "Please install Homebrew first: https://brew.sh"
+                echo "Then run: brew install python3"
+                exit 1
+            fi
+        elif [[ -f /etc/os-release ]]; then
+            . /etc/os-release
+            if [[ "$ID" == "amzn" ]] || [[ "$ID_LIKE" == *"rhel"* ]]; then
+                # Amazon Linux / RHEL-based
+                sudo yum install python3 -y
+            elif [[ "$ID" == "ubuntu" ]] || [[ "$ID" == "debian" ]] || [[ "$ID_LIKE" == *"debian"* ]]; then
+                # Debian/Ubuntu
+                sudo apt-get update && sudo apt-get install python3 python3-pip -y
+            else
+                echo "⚠️  Unsupported Linux distribution: $ID"
+                echo "   Please install Python 3 manually"
+                exit 1
+            fi
+        else
+            echo "⚠️  Unsupported operating system"
+            echo "   Please install Python 3 manually"
+            exit 1
+        fi
+
+        # Verify installation
+        if ! command -v python3 &> /dev/null; then
+            echo "❌ Python 3 installation failed"
+            exit 1
+        fi
+
+        echo "✅ Python 3 installed successfully!"
+    fi
+}
 
 # ============================================
 # Self-installation check
@@ -116,8 +168,13 @@ check_and_install_dependencies() {
     fi
 }
 
-# Check dependencies before running configuration (unless --help)
+# Check Python installation first (unless --help)
 if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" ]]; then
+    check_python
+fi
+
+# Check dependencies before running configuration (unless --help or start/run)
+if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" && "$1" != "start" && "$1" != "run" ]]; then
     check_and_install_dependencies
 fi
 
@@ -151,7 +208,7 @@ start_bot_if_requested() {
             echo "✅ Setup complete!"
             echo ""
             echo "To start the bot later, run:"
-            echo "  python -m src.main"
+            echo "  dt-setup start"
             echo ""
         fi
     fi
@@ -185,6 +242,21 @@ case "$1" in
         # Calendar configuration
         python3 "$CONFIGURE_PY" --calendar-only
         ;;
+    "start"|"run")
+        # Start the bot
+        echo ""
+        echo "🚀 Starting Digital Twin bot..."
+        echo ""
+
+        if [ -f "$SCRIPT_DIR/src/main.py" ]; then
+            cd "$SCRIPT_DIR"
+            python3 -m src.main
+        else
+            echo "❌ Error: src/main.py not found"
+            echo "   Make sure you're in the digital-twin directory"
+            exit 1
+        fi
+        ;;
     "--help"|"-h"|"help")
         # Show help
         cat << EOF
@@ -200,6 +272,8 @@ ONE command does everything:
 
 Usage:
   dt-setup                Full setup wizard (all tools)
+  dt-setup start          Start the bot
+  dt-setup run            Start the bot (alias)
   dt-setup core           Configure API keys only
   dt-setup telegram       Configure Telegram bot only
   dt-setup email          Configure email only
@@ -207,6 +281,7 @@ Usage:
 
 Aliases:
   digital-twin, all, full → Full setup
+  start, run              → Start the bot
   core, api, keys         → Core API configuration
   telegram, tg            → Telegram configuration
   email, mail             → Email configuration
@@ -214,6 +289,7 @@ Aliases:
 
 Examples:
   dt-setup                # Full wizard
+  dt-setup start          # Start the bot
   dt-setup email          # Just update email
   dt-setup core           # Just update API key
 
