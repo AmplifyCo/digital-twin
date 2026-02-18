@@ -260,3 +260,73 @@ Assistant ({model_used}): {assistant_response}"""
             context_parts.append(f"- {r['text'][:200]}")
 
         return "\n".join(context_parts)
+
+    async def populate_project_essentials(self, project_info: Dict[str, Any]):
+        """Populate CoreBrain with essential project information.
+
+        This should be called on startup to ensure CoreBrain has foundational
+        knowledge about the project.
+
+        Args:
+            project_info: Dict containing project essentials
+        """
+        logger.info("Populating CoreBrain with project essentials...")
+
+        # Store git repository information
+        if "git_url" in project_info:
+            await self.db.store(
+                text=f"Git Repository: {project_info['git_url']}\n"
+                     f"This is the main repository for the Digital Twin project.",
+                metadata={
+                    "type": "project_info",
+                    "category": "git",
+                    "git_url": project_info["git_url"]
+                },
+                doc_id="project_git_url"
+            )
+
+        # Store project architecture
+        if "architecture" in project_info:
+            await self.db.store(
+                text=f"Project Architecture:\n{project_info['architecture']}",
+                metadata={
+                    "type": "project_info",
+                    "category": "architecture"
+                },
+                doc_id="project_architecture"
+            )
+
+        # Store build phases and current state
+        if "build_state" in project_info:
+            await self.db.store(
+                text=f"Build State:\n{project_info['build_state']}",
+                metadata={
+                    "type": "project_info",
+                    "category": "build_state"
+                },
+                doc_id="project_build_state"
+            )
+
+        # Store coding guidelines and patterns
+        if "guidelines" in project_info:
+            await self.db.store(
+                text=f"Coding Guidelines:\n{project_info['guidelines']}",
+                metadata={
+                    "type": "project_info",
+                    "category": "guidelines"
+                },
+                doc_id="project_guidelines"
+            )
+
+        # Store system context
+        if "system_context" in project_info:
+            await self.db.store(
+                text=f"System Context:\n{project_info['system_context']}",
+                metadata={
+                    "type": "project_info",
+                    "category": "system"
+                },
+                doc_id="project_system_context"
+            )
+
+        logger.info("✅ CoreBrain populated with project essentials")

@@ -50,6 +50,61 @@ async def main():
         if config.self_build_mode:
             logger.info("🧠 Initializing coreBrain for self-building...")
             brain = CoreBrain(config.core_brain_path)
+
+            # Populate CoreBrain with project essentials
+            logger.info("📚 Populating CoreBrain with project knowledge...")
+            await brain.populate_project_essentials({
+                "git_url": "https://github.com/AmplifyCo/digital-twin.git",
+                "architecture": """Digital Twin - Self-Building AI System with Dual Brain Architecture
+
+Architecture:
+- ConversationManager: Channel-agnostic conversation intelligence
+- TelegramChannel: Thin transport layer for Telegram
+- CoreBrain: Build knowledge and system architecture (shared/factory knowledge)
+- DigitalCloneBrain: User-specific conversations (private/personal knowledge)
+- ModelRouter: Intelligent model selection (Opus → Sonnet → Haiku → Local fallback)
+- Agent: Autonomous task execution with tools (Bash, File, Web, Browser)
+- AutoUpdater: Automated security updates with vulnerability scanning
+- Monitoring: Telegram notifications + Web dashboard""",
+
+                "build_state": """Current Build Status:
+✅ Implemented:
+- Configuration system
+- Anthropic API client
+- Tool system (Bash, File, Web, Browser)
+- Dual brain architecture (CoreBrain + DigitalCloneBrain)
+- Core agent execution loop
+- Sub-agent spawning system
+- Multi-agent orchestrator
+- Auto-update system with vulnerability scanning
+- Monitoring (Telegram + Dashboard)
+- Channel-agnostic conversation architecture
+- Intent classification with local LLM
+- Brain context injection for Claude
+
+🔨 In Progress:
+- Meta-agent self-builder
+
+📋 Pending:
+- [Add as features are requested]""",
+
+                "guidelines": """Coding Guidelines:
+- Use async/await for all I/O operations
+- Store build knowledge in CoreBrain (shared across deployments)
+- Store user conversations in DigitalCloneBrain (private per user)
+- Local LLM for intent classification, Claude API for intelligence
+- Local model as fallback when API unavailable
+- Always inject Brain context into Claude prompts
+- Log important decisions and patterns to CoreBrain
+- Keep code modular and well-documented""",
+
+                "system_context": """System: Digital Twin
+Mode: Self-Build (CoreBrain active)
+Purpose: Building an autonomous AI system that builds itself
+Service: digital-twin.service (systemd)
+Deployment: EC2 with Cloudflare Tunnel
+Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
+            })
         else:
             logger.info("🧠 Initializing DigitalCloneBrain for production...")
             brain = DigitalCloneBrain(config.digital_clone_brain_path)
