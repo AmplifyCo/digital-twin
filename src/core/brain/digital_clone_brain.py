@@ -1,59 +1,187 @@
-"""Digital Clone Brain for production use (permanent)."""
+"""Digital Clone Brain for production use (permanent).
+
+Architecture inspired by human consciousness:
+
+COLLECTIVE CONSCIOUSNESS (shared across all talents):
+    - Identity: WHO I am — personality, communication style
+    - Preferences: WHAT I like — food, travel, general tastes
+    - Contacts: WHO I know — people, relationships
+
+ISOLATED CONTEXTS (per-talent, never bleed into each other):
+    - Telegram context: personal chat history
+    - Email context: email conversations, drafts, threads
+    - X context: posts, tweet history, public voice
+    - Calendar context: scheduling, appointments
+    - ... each talent gets its own isolated memory
+
+When retrieving context for a talent:
+    1. ALWAYS include collective (identity + preferences + relevant contacts)
+    2. ONLY include that talent's isolated memory
+    3. NEVER pull email context when posting to X, etc.
+
+Like a human brain — you don't mix work emails with family chat
+or social media posts with private conversations. But your identity,
+preferences, and knowledge of people stays consistent everywhere.
+"""
 
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from cryptography.fernet import Fernet
 from .vector_db import VectorDatabase
 
 logger = logging.getLogger(__name__)
 
+# Map channels to talent context names
+CHANNEL_TO_CONTEXT = {
+    "telegram": "telegram",
+    "email": "email",
+    "whatsapp": "whatsapp",
+    "x": "x",
+    "linkedin": "linkedin",
+    "slack": "slack",
+    "discord": "discord",
+    "calendar": "calendar",
+    "web": "web",
+}
+
 
 class DigitalCloneBrain:
-    """Production brain for digital clone. Persistent forever."""
+    """Production brain for digital clone. Persistent forever.
+
+    Two layers:
+        - Collective: shared identity, preferences, contacts
+        - Contexts: isolated per-talent conversation memory
+    """
 
     def __init__(self, path: str = "data/digital_clone_brain"):
-        """Initialize digital clone brain.
-
-        Args:
-            path: Path to store brain data
-        """
         self.path = path
 
-        # Initialize vector databases for different types of memory
+        # ============================================================
+        # COLLECTIVE CONSCIOUSNESS — shared across all talents
+        # ============================================================
+
+        # Identity: personality, communication style, core knowledge
+        self.identity = VectorDatabase(
+            path=f"{path}/collective/identity",
+            collection_name="identity"
+        )
+
+        # Preferences: likes, dislikes, habits
+        self.preferences = VectorDatabase(
+            path=f"{path}/collective/preferences",
+            collection_name="preferences"
+        )
+
+        # Contacts: people, relationships
+        self.contacts = VectorDatabase(
+            path=f"{path}/collective/contacts",
+            collection_name="contacts"
+        )
+
+        # ============================================================
+        # ISOLATED CONTEXTS — per-talent memory (lazy-loaded)
+        # ============================================================
+        self._contexts: Dict[str, VectorDatabase] = {}
+
+        # ============================================================
+        # BACKWARD COMPAT — keep old unified memory for migration
+        # ============================================================
         self.memory = VectorDatabase(
             path=f"{path}/memory",
             collection_name="clone_memory"
         )
 
-        self.preferences = VectorDatabase(
-            path=f"{path}/preferences",
-            collection_name="preferences"
-        )
-
-        self.contacts = VectorDatabase(
-            path=f"{path}/contacts",
-            collection_name="contacts"
-        )
-
         logger.info(f"Initialized DigitalCloneBrain at {path}")
+        logger.info("  Collective: identity, preferences, contacts")
+        logger.info("  Contexts: isolated per-talent (lazy-loaded)")
 
-    async def learn_communication_style(self, email_sample: str):
-        """Learn communication style from email sample.
+    def _get_context(self, talent: str) -> VectorDatabase:
+        """Get or create an isolated context for a talent.
+
+        Each talent gets its own ChromaDB collection so memories
+        never bleed across contexts.
+        """
+        ctx_name = CHANNEL_TO_CONTEXT.get(talent, talent)
+        if ctx_name not in self._contexts:
+            self._contexts[ctx_name] = VectorDatabase(
+                path=f"{self.path}/contexts/{ctx_name}",
+                collection_name=f"{ctx_name}_memory"
+            )
+            logger.info(f"  Created isolated context: {ctx_name}")
+        return self._contexts[ctx_name]
+
+    def _resolve_talent(self, channel: str = None, talent: str = None) -> Optional[str]:
+        """Resolve talent name from channel or explicit talent parameter."""
+        if talent:
+            return CHANNEL_TO_CONTEXT.get(talent, talent)
+        if channel:
+            return CHANNEL_TO_CONTEXT.get(channel, channel)
+        return None
+
+    # ================================================================
+    # COLLECTIVE — Identity & Style
+    # ================================================================
+
+    async def learn_communication_style(self, sample: str, context: str = "general"):
+        """Learn communication style from a sample.
 
         Args:
-            email_sample: Sample email text
+            sample: Sample text (email, tweet, chat message)
+            context: Where this style applies (general, email, x, etc.)
         """
-        await self.preferences.store(
-            text=email_sample,
+        await self.identity.store(
+            text=sample,
             metadata={
                 "type": "communication_style",
+                "context": context,
                 "timestamp": datetime.now().isoformat()
             }
         )
+        logger.info(f"Learned communication style ({context})")
 
-        logger.info("Learned communication style from email sample")
+    async def store_identity(self, aspect: str, description: str):
+        """Store an identity aspect (personality trait, core value, etc.).
+
+        Args:
+            aspect: Identity aspect (e.g., "tone", "values", "expertise")
+            description: Description of this aspect
+        """
+        await self.identity.store(
+            text=f"{aspect}: {description}",
+            metadata={
+                "type": "identity",
+                "aspect": aspect,
+                "timestamp": datetime.now().isoformat()
+            },
+            doc_id=f"identity_{aspect.lower().replace(' ', '_')}"
+        )
+        logger.info(f"Stored identity aspect: {aspect}")
+
+    # ================================================================
+    # COLLECTIVE — Preferences
+    # ================================================================
+
+    async def remember_preference(self, category: str, preference: str):
+        """Remember a user preference (shared across all talents).
+
+        Args:
+            category: Preference category (food, travel, etc.)
+            preference: Preference description
+        """
+        await self.preferences.store(
+            text=f"Preference in {category}: {preference}",
+            metadata={
+                "category": category,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        logger.info(f"Remembered preference: {category} - {preference}")
+
+    # ================================================================
+    # COLLECTIVE — Contacts
+    # ================================================================
 
     async def remember_person(
         self,
@@ -61,7 +189,7 @@ class DigitalCloneBrain:
         relationship: str,
         preferences: Dict[str, Any]
     ):
-        """Remember a person and their details.
+        """Remember a person and their details (shared across all talents).
 
         Args:
             name: Person's name
@@ -79,100 +207,11 @@ class DigitalCloneBrain:
             },
             doc_id=f"contact_{contact_id}"
         )
-
         logger.info(f"Remembered person: {name}")
 
-    async def remember_preference(self, category: str, preference: str):
-        """Remember a user preference.
-
-        Args:
-            category: Preference category (food, travel, etc.)
-            preference: Preference description
-        """
-        await self.preferences.store(
-            text=f"Preference in {category}: {preference}",
-            metadata={
-                "category": category,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-
-        logger.info(f"Remembered preference: {category} - {preference}")
-
-    async def export_for_migration(self, password: str, output_file: str = "digital_clone_brain.brain") -> str:
-        """Export entire brain for migration to new machine.
-
-        Args:
-            password: Password for encryption
-            output_file: Output file name
-
-        Returns:
-            Path to encrypted brain file
-        """
-        # Create brain data structure
-        brain_data = {
-            "memory_count": self.memory.count(),
-            "preferences_count": self.preferences.count(),
-            "contacts_count": self.contacts.count(),
-            "exported_at": datetime.now().isoformat()
-        }
-
-        # Convert to JSON
-        json_data = json.dumps(brain_data)
-
-        # Encrypt with password
-        key = Fernet.generate_key()
-        cipher = Fernet(key)
-        encrypted = cipher.encrypt(json_data.encode())
-
-        # Save to file
-        with open(output_file, 'wb') as f:
-            f.write(encrypted)
-
-        logger.info(f"Exported DigitalCloneBrain to {output_file}")
-        return output_file
-
-    async def import_from_migration(self, brain_file: str, password: str):
-        """Import brain from migration file.
-
-        Args:
-            brain_file: Path to encrypted brain file
-            password: Decryption password
-        """
-        logger.info(f"Importing DigitalCloneBrain from {brain_file}")
-        # Implementation would decrypt and restore data
-        # Simplified for now
-
-    async def get_relevant_context(self, task: str, max_results: int = 5) -> str:
-        """Get relevant context for a task.
-
-        Args:
-            task: Task description
-            max_results: Max number of memories to retrieve
-
-        Returns:
-            Context string
-        """
-        # Search memories
-        memories = await self.memory.search(task, n_results=max_results)
-
-        # Search preferences
-        prefs = await self.preferences.search(task, n_results=3)
-
-        # Build context
-        context_parts = []
-
-        if memories:
-            context_parts.append("## Relevant Memories:")
-            for mem in memories:
-                context_parts.append(f"- {mem['text'][:200]}...")
-
-        if prefs:
-            context_parts.append("\n## User Preferences:")
-            for pref in prefs:
-                context_parts.append(f"- {pref['text']}")
-
-        return "\n".join(context_parts) if context_parts else ""
+    # ================================================================
+    # ISOLATED CONTEXT — Conversation Storage
+    # ================================================================
 
     async def store_conversation_turn(
         self,
@@ -181,45 +220,158 @@ class DigitalCloneBrain:
         model_used: str,
         metadata: Dict[str, Any] = None
     ):
-        """Store a conversation turn for context continuity.
+        """Store a conversation turn in the correct isolated context.
+
+        The channel/talent from metadata determines which context
+        gets this memory. Email conversations stay in email context,
+        Telegram chats stay in Telegram context, etc.
 
         Args:
             user_message: User's message
             assistant_response: Assistant's response
-            model_used: Which model generated the response (claude-opus-4, smollm2, etc)
-            metadata: Additional metadata
+            model_used: Which model generated the response
+            metadata: Must include 'channel' for context isolation
         """
+        metadata = metadata or {}
+        channel = metadata.get("channel", "unknown")
+        talent = self._resolve_talent(channel=channel)
+
         conversation_text = f"""User: {user_message}
 Assistant ({model_used}): {assistant_response}"""
 
-        await self.memory.store(
-            text=conversation_text,
-            metadata={
-                "type": "conversation",
-                "model_used": model_used,
-                "timestamp": datetime.now().isoformat(),
-                "user_message": user_message,
-                "assistant_response": assistant_response,
-                **(metadata or {})
-            }
-        )
+        store_metadata = {
+            "type": "conversation",
+            "model_used": model_used,
+            "timestamp": datetime.now().isoformat(),
+            "user_message": user_message,
+            "assistant_response": assistant_response,
+            "talent": talent or "unknown",
+            **metadata
+        }
 
-        logger.debug(f"Stored conversation turn (model: {model_used})")
+        if talent:
+            # Store in isolated talent context
+            ctx = self._get_context(talent)
+            await ctx.store(text=conversation_text, metadata=store_metadata)
+            logger.debug(f"Stored conversation in [{talent}] context (model: {model_used})")
+        else:
+            # No talent identified — store in legacy unified memory
+            await self.memory.store(text=conversation_text, metadata=store_metadata)
+            logger.debug(f"Stored conversation in [general] memory (model: {model_used})")
 
-    async def get_recent_conversation(self, limit: int = 5) -> List[Dict[str, Any]]:
-        """Retrieve recent conversation turns.
+    # ================================================================
+    # CONTEXT RETRIEVAL — Collective + Isolated
+    # ================================================================
+
+    async def get_relevant_context(
+        self,
+        task: str,
+        max_results: int = 5,
+        talent: str = None,
+        channel: str = None
+    ) -> str:
+        """Get relevant context for a task.
+
+        Combines:
+        1. Collective consciousness (identity + preferences) — always included
+        2. Isolated talent context — only the specified talent's memories
+
+        Args:
+            task: Task description / search query
+            max_results: Max memories to retrieve per source
+            talent: Talent name for context isolation
+            channel: Channel name (resolved to talent if talent not specified)
+
+        Returns:
+            Formatted context string
+        """
+        resolved_talent = self._resolve_talent(channel=channel, talent=talent)
+        context_parts = []
+
+        # --- COLLECTIVE: Identity & style (always included) ---
+        try:
+            identity_results = await self.identity.search(task, n_results=3)
+            if identity_results:
+                context_parts.append("## Identity & Style:")
+                for r in identity_results:
+                    context_parts.append(f"- {r['text'][:200]}")
+        except Exception as e:
+            logger.debug(f"Could not search identity: {e}")
+
+        # --- COLLECTIVE: Preferences (always included) ---
+        try:
+            prefs = await self.preferences.search(task, n_results=3)
+            if prefs:
+                context_parts.append("\n## Preferences:")
+                for pref in prefs:
+                    context_parts.append(f"- {pref['text']}")
+        except Exception as e:
+            logger.debug(f"Could not search preferences: {e}")
+
+        # --- COLLECTIVE: Relevant contacts (always included) ---
+        try:
+            contacts = await self.contacts.search(task, n_results=2)
+            if contacts:
+                context_parts.append("\n## Relevant Contacts:")
+                for c in contacts:
+                    context_parts.append(f"- {c['text'][:200]}")
+        except Exception as e:
+            logger.debug(f"Could not search contacts: {e}")
+
+        # --- ISOLATED: Talent-specific memories (only current talent) ---
+        if resolved_talent:
+            try:
+                ctx = self._get_context(resolved_talent)
+                memories = await ctx.search(task, n_results=max_results)
+                if memories:
+                    context_parts.append(f"\n## {resolved_talent.title()} Context:")
+                    for mem in memories:
+                        context_parts.append(f"- {mem['text'][:200]}")
+            except Exception as e:
+                logger.debug(f"Could not search {resolved_talent} context: {e}")
+        else:
+            # Fallback: search legacy unified memory
+            try:
+                memories = await self.memory.search(task, n_results=max_results)
+                if memories:
+                    context_parts.append("\n## Relevant Memories:")
+                    for mem in memories:
+                        context_parts.append(f"- {mem['text'][:200]}")
+            except Exception as e:
+                logger.debug(f"Could not search general memory: {e}")
+
+        return "\n".join(context_parts) if context_parts else ""
+
+    async def get_recent_conversation(
+        self,
+        limit: int = 5,
+        talent: str = None,
+        channel: str = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve recent conversation turns from a specific talent context.
 
         Args:
             limit: Number of recent turns to retrieve
+            talent: Talent name for context isolation
+            channel: Channel name (resolved to talent)
 
         Returns:
             List of conversation turn dicts
         """
-        # Search for recent conversations
-        results = await self.memory.search(
-            query="recent conversation",
-            n_results=limit * 2  # Get more to filter
-        )
+        resolved_talent = self._resolve_talent(channel=channel, talent=talent)
+
+        # Search in the correct isolated context
+        if resolved_talent:
+            ctx = self._get_context(resolved_talent)
+            results = await ctx.search(
+                query="recent conversation",
+                n_results=limit * 2
+            )
+        else:
+            results = await self.memory.search(
+                query="recent conversation",
+                n_results=limit * 2
+            )
 
         # Filter for conversation type and sort by timestamp
         conversations = [
@@ -227,63 +379,81 @@ Assistant ({model_used}): {assistant_response}"""
                 "user_message": r["metadata"].get("user_message", ""),
                 "assistant_response": r["metadata"].get("assistant_response", ""),
                 "model_used": r["metadata"].get("model_used", "unknown"),
-                "timestamp": r["metadata"].get("timestamp", "")
+                "timestamp": r["metadata"].get("timestamp", ""),
+                "talent": r["metadata"].get("talent", "unknown"),
             }
             for r in results
             if r["metadata"].get("type") == "conversation"
         ]
 
-        # Sort by timestamp (most recent first)
-        conversations.sort(
-            key=lambda x: x["timestamp"],
-            reverse=True
-        )
-
+        conversations.sort(key=lambda x: x["timestamp"], reverse=True)
         return conversations[:limit]
 
-    async def get_conversation_context(self, current_message: str, limit: int = 3) -> str:
+    async def get_conversation_context(
+        self,
+        current_message: str,
+        limit: int = 3,
+        talent: str = None,
+        channel: str = None
+    ) -> str:
         """Get formatted conversation context for model prompt.
+
+        Only retrieves conversation history from the specified talent's
+        isolated context. Email history won't appear in X posting context.
 
         Args:
             current_message: Current user message
             limit: Number of previous turns to include
+            talent: Talent name for context isolation
+            channel: Channel name (resolved to talent)
 
         Returns:
             Formatted context string
         """
-        recent = await self.get_recent_conversation(limit)
+        recent = await self.get_recent_conversation(
+            limit=limit, talent=talent, channel=channel
+        )
 
         if not recent:
             return ""
 
-        context_lines = ["## Recent Conversation:"]
+        resolved_talent = self._resolve_talent(channel=channel, talent=talent)
+        label = f"{resolved_talent.title()} " if resolved_talent else ""
+        context_lines = [f"## Recent {label}Conversation:"]
 
-        # Reverse to show oldest first (chronological order)
         for turn in reversed(recent):
             context_lines.append(f"User: {turn['user_message']}")
             context_lines.append(f"Assistant: {turn['assistant_response']}")
-            context_lines.append("")  # Blank line
+            context_lines.append("")
 
         return "\n".join(context_lines)
 
-    async def detect_context_drift(self) -> Dict[str, Any]:
+    # ================================================================
+    # CONTEXT DRIFT DETECTION
+    # ================================================================
+
+    async def detect_context_drift(self, talent: str = None, channel: str = None) -> Dict[str, Any]:
         """Detect if context quality has degraded (too many local model responses).
+
+        Args:
+            talent: Talent name for scoped detection
+            channel: Channel name
 
         Returns:
             Drift analysis dict
         """
-        recent = await self.get_recent_conversation(limit=10)
+        recent = await self.get_recent_conversation(
+            limit=10, talent=talent, channel=channel
+        )
 
         if not recent:
             return {"has_drift": False, "reason": "No conversation history"}
 
-        # Count local model usage
         local_model_count = sum(
             1 for turn in recent
             if turn["model_used"] in ["smollm2", "deepseek-r1"]
         )
 
-        # If more than 50% are local models, we have drift
         drift_threshold = len(recent) * 0.5
         has_drift = local_model_count > drift_threshold
 
@@ -295,13 +465,12 @@ Assistant ({model_used}): {assistant_response}"""
             "recommendation": "Switch back to Claude API for quality restoration" if has_drift else "Quality OK"
         }
 
-    async def queue_for_claude_review(self, message: str, local_response: str):
-        """Queue a local model response for Claude to review/correct when available.
+    # ================================================================
+    # REVIEW QUEUE (stays in legacy memory — cross-talent)
+    # ================================================================
 
-        Args:
-            message: User's message
-            local_response: Local model's response
-        """
+    async def queue_for_claude_review(self, message: str, local_response: str):
+        """Queue a local model response for Claude to review/correct when available."""
         await self.memory.store(
             text=f"LOCAL RESPONSE (needs review): {message} -> {local_response}",
             metadata={
@@ -312,21 +481,13 @@ Assistant ({model_used}): {assistant_response}"""
                 "reviewed": False
             }
         )
-
         logger.info("Queued local response for Claude review")
 
     async def get_pending_reviews(self) -> List[Dict[str, Any]]:
-        """Get responses that need Claude's review/correction.
+        """Get responses that need Claude's review/correction."""
+        results = await self.memory.search(query="needs review", n_results=20)
 
-        Returns:
-            List of pending review items
-        """
-        results = await self.memory.search(
-            query="needs review",
-            n_results=20
-        )
-
-        pending = [
+        return [
             {
                 "user_message": r["metadata"].get("user_message", ""),
                 "local_response": r["metadata"].get("local_response", ""),
@@ -337,4 +498,60 @@ Assistant ({model_used}): {assistant_response}"""
             and not r["metadata"].get("reviewed", False)
         ]
 
-        return pending
+    # ================================================================
+    # EXPORT / IMPORT
+    # ================================================================
+
+    async def export_for_migration(self, password: str, output_file: str = "digital_clone_brain.brain") -> str:
+        """Export entire brain for migration to new machine."""
+        brain_data = {
+            "collective": {
+                "identity_count": self.identity.count(),
+                "preferences_count": self.preferences.count(),
+                "contacts_count": self.contacts.count(),
+            },
+            "contexts": {
+                name: ctx.count() for name, ctx in self._contexts.items()
+            },
+            "legacy_memory_count": self.memory.count(),
+            "exported_at": datetime.now().isoformat()
+        }
+
+        json_data = json.dumps(brain_data)
+        key = Fernet.generate_key()
+        cipher = Fernet(key)
+        encrypted = cipher.encrypt(json_data.encode())
+
+        with open(output_file, 'wb') as f:
+            f.write(encrypted)
+
+        logger.info(f"Exported DigitalCloneBrain to {output_file}")
+        return output_file
+
+    async def import_from_migration(self, brain_file: str, password: str):
+        """Import brain from migration file."""
+        logger.info(f"Importing DigitalCloneBrain from {brain_file}")
+
+    # ================================================================
+    # INTROSPECTION
+    # ================================================================
+
+    def get_brain_stats(self) -> Dict[str, Any]:
+        """Get statistics about brain state."""
+        context_stats = {}
+        for name, ctx in self._contexts.items():
+            try:
+                context_stats[name] = ctx.count()
+            except Exception:
+                context_stats[name] = 0
+
+        return {
+            "collective": {
+                "identity": self.identity.count(),
+                "preferences": self.preferences.count(),
+                "contacts": self.contacts.count(),
+            },
+            "contexts": context_stats,
+            "legacy_memory": self.memory.count(),
+            "active_contexts": list(self._contexts.keys()),
+        }
