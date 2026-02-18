@@ -1,4 +1,4 @@
-"""Browser tool for web browsing and automation."""
+"""Browser tool for web browsing and automation using Playwright."""
 
 import asyncio
 import logging
@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class BrowserTool(BaseTool):
-    """Tool for web browsing using text-based or headless browser."""
+    """Tool for web browsing using text-based or headless browser (Playwright)."""
 
     name = "browser"
-    description = """Browse web pages using text-based (w3m) or full browser (Selenium).
+    description = """Browse web pages using text-based (w3m) or full browser (Playwright).
     Use text mode for reading articles, documentation. Use full mode for JavaScript-heavy sites."""
 
     parameters = {
@@ -31,34 +31,39 @@ class BrowserTool(BaseTool):
             "type": "boolean",
             "description": "Execute JavaScript (only for full mode)",
             "default": False
+        },
+        "wait_for_selector": {
+            "type": "string",
+            "description": "CSS selector to wait for before returning content (full mode only)",
+            "default": None
         }
     }
 
     def __init__(self):
         """Initialize BrowserTool."""
-        self.selenium_available = False
+        self.playwright_available = False
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
-            self.webdriver = webdriver
-            self.Options = Options
-            self.selenium_available = True
-            logger.info("Selenium available for full browser mode")
+            from playwright.async_api import async_playwright
+            self.async_playwright = async_playwright
+            self.playwright_available = True
+            logger.info("Playwright available for full browser mode")
         except ImportError:
-            logger.warning("Selenium not installed. Only text mode available. Install with: pip install selenium")
+            logger.warning("Playwright not installed. Only text mode available. Install with: pip install playwright && playwright install chromium")
 
     async def execute(
         self,
         url: str,
         mode: str = "text",
-        javascript: bool = False
+        javascript: bool = False,
+        wait_for_selector: Optional[str] = None
     ) -> ToolResult:
         """Browse a web page.
 
         Args:
             url: URL to browse
-            mode: 'text' for w3m, 'full' for Selenium
+            mode: 'text' for w3m, 'full' for Playwright
             javascript: Execute JavaScript (full mode only)
+            wait_for_selector: CSS selector to wait for (full mode only)
 
         Returns:
             ToolResult with page content
@@ -67,7 +72,7 @@ class BrowserTool(BaseTool):
             if mode == "text":
                 return await self._browse_text(url)
             elif mode == "full":
-                return await self._browse_full(url, javascript)
+                return await self._browse_full(url, javascript, wait_for_selector)
             else:
                 return ToolResult(
                     success=False,
@@ -175,68 +180,103 @@ class BrowserTool(BaseTool):
                 error=f"Curl error: {str(e)}"
             )
 
-    async def _browse_full(self, url: str, execute_js: bool = False) -> ToolResult:
-        """Browse using headless Chromium via Selenium.
+    async def _browse_full(
+        self,
+        url: str,
+        execute_js: bool = False,
+        wait_for_selector: Optional[str] = None
+    ) -> ToolResult:
+        """Browse using headless Chromium via Playwright.
 
         Args:
             url: URL to browse
             execute_js: Whether to wait for JavaScript execution
+            wait_for_selector: CSS selector to wait for before extracting content
 
         Returns:
             ToolResult with page content
         """
-        if not self.selenium_available:
+        if not self.playwright_available:
             return ToolResult(
                 success=False,
-                error="Selenium not available. Install with: pip install selenium"
+                error="Playwright not available. Install with: pip install playwright && playwright install chromium"
             )
 
-        driver = None
+        playwright = None
+        browser = None
         try:
-            # Configure headless Chrome
-            options = self.Options()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
+            # Launch Playwright
+            playwright = await self.async_playwright().start()
 
-            # Create driver
-            driver = self.webdriver.Chrome(options=options)
-            driver.set_page_load_timeout(30)
+            # Launch browser (headless by default)
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu'
+                ]
+            )
+
+            # Create context and page
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            )
+            page = await context.new_page()
+
+            # Set timeout
+            page.set_default_timeout(30000)  # 30 seconds
 
             # Navigate to URL
-            driver.get(url)
+            await page.goto(url, wait_until='domcontentloaded')
 
             # Wait for JavaScript if requested
             if execute_js:
-                await asyncio.sleep(2)  # Wait for JS to execute
+                await page.wait_for_load_state('networkidle')
+
+            # Wait for specific selector if provided
+            if wait_for_selector:
+                await page.wait_for_selector(wait_for_selector, timeout=10000)
 
             # Get page content
-            page_source = driver.page_source
-            page_text = driver.find_element("tag name", "body").text
+            page_text = await page.inner_text('body')
+            page_title = await page.title()
+            page_url = page.url  # May differ from original if redirected
+
+            # Close page and context
+            await context.close()
 
             return ToolResult(
                 success=True,
                 output=page_text,
                 metadata={
-                    "url": url,
+                    "url": page_url,
+                    "title": page_title,
                     "mode": "full",
-                    "browser": "chromium",
+                    "browser": "chromium-playwright",
                     "javascript": execute_js,
-                    "page_source_length": len(page_source)
+                    "wait_for_selector": wait_for_selector,
+                    "content_length": len(page_text)
                 }
             )
 
         except Exception as e:
-            logger.error(f"Selenium error: {e}")
+            logger.error(f"Playwright error: {e}")
             return ToolResult(
                 success=False,
-                error=f"Selenium browser error: {str(e)}"
+                error=f"Playwright browser error: {str(e)}"
             )
 
         finally:
-            if driver:
+            # Cleanup
+            if browser:
                 try:
-                    driver.quit()
+                    await browser.close()
+                except:
+                    pass
+            if playwright:
+                try:
+                    await playwright.stop()
                 except:
                     pass

@@ -46,7 +46,7 @@ structlog>=24.1.0
 #   pip install discord.py slack-bolt slack-sdk
 #
 # For full browser automation:
-#   pip install selenium pillow
+#   pip install playwright && playwright install chromium
 #
 # For computer use automation:
 #   pip install pyautogui mss
