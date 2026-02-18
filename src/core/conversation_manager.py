@@ -133,7 +133,8 @@ class ConversationManager:
         channel: str = "unknown",
         user_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        progress_callback=None
+        progress_callback=None,
+        enable_periodic_updates: bool = False
     ) -> str:
         """Process a message and return response.
 
@@ -145,6 +146,10 @@ class ConversationManager:
             user_id: User identifier
             metadata: Additional metadata
             progress_callback: Optional async function to call with progress updates
+            enable_periodic_updates: Enable periodic status updates (default: False)
+                - Telegram: True (message editing is non-intrusive)
+                - Email/SMS: False (each update = new message/notification = spammy)
+                - WhatsApp: True (supports message editing like Telegram)
 
         Returns:
             Response string
@@ -155,12 +160,15 @@ class ConversationManager:
             # Store callback for use by other methods
             self._progress_callback = progress_callback
 
-            # Start periodic updates if callback provided (channel-agnostic)
+            # Start periodic updates ONLY if enabled (default: disabled)
+            # Enabled for: Telegram, WhatsApp (message editing)
+            # Disabled for: Email, SMS (would be spammy)
             update_task = None
-            if progress_callback:
+            if progress_callback and enable_periodic_updates:
                 update_task = asyncio.create_task(
                     self._send_periodic_updates(message, progress_callback)
                 )
+                logger.debug(f"Periodic updates enabled for {channel}")
 
             # ========================================================================
             # LAYER 12: RATE LIMITING

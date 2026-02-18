@@ -141,11 +141,13 @@ class TelegramChannel:
 
             # CORE INTELLIGENCE HERE (channel-agnostic)
             # ConversationManager handles periodic updates internally for ALL operations
+            # Telegram enables periodic updates (message editing is non-intrusive)
             response = await self.conversation_manager.process_message(
                 message=message,
                 channel="telegram",
                 user_id=user_id,
-                progress_callback=update_progress  # Telegram-specific callback
+                progress_callback=update_progress,  # Telegram-specific callback
+                enable_periodic_updates=True  # Telegram: message editing = non-spammy
             )
 
             # Delete status message
