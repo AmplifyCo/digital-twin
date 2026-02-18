@@ -391,8 +391,8 @@ Capabilities:
             return await self._parse_intent(message)
         except Exception as e:
             if self.router.should_use_fallback(e):
-                logger.warning(f"Intent parsing failed, using local: {e}")
-                return self._parse_intent_locally(message)
+                logger.warning(f"Intent parsing failed, using local LLM: {e}")
+                return await self._parse_intent_locally(message)
             raise
 
     async def _parse_intent(self, message: str) -> Dict[str, Any]:
@@ -407,8 +407,10 @@ Capabilities:
         # Simplified - would use full implementation
         return {"action": "unknown", "confidence": 0.5, "parameters": {}}
 
-    def _parse_intent_locally(self, message: str) -> Dict[str, Any]:
-        """Parse intent locally using keywords.
+    async def _parse_intent_locally(self, message: str) -> Dict[str, Any]:
+        """Parse intent using local LLM (better than keyword matching).
+
+        Falls back to keyword matching if local LLM is unavailable.
 
         Args:
             message: User message
@@ -416,6 +418,54 @@ Capabilities:
         Returns:
             Intent dict
         """
+        # Try local LLM first if available
+        if self.agent.config.local_model_enabled:
+            try:
+                from src.integrations.local_model_client import LocalModelClient
+
+                local_client = LocalModelClient(
+                    model_name=self.agent.config.local_model_name,
+                    endpoint=self.agent.config.local_model_endpoint
+                )
+
+                if local_client.is_available():
+                    # Use local LLM to classify intent
+                    prompt = f"""Classify the user's intent. Return ONLY the intent name.
+
+User message: "{message}"
+
+Possible intents:
+- build_feature: User wants to build, create, implement, or add a feature
+- status: User asks about system status or what's running
+- question: User is asking a question (what, how, why, etc.)
+- action: User wants to do something (fix, update, modify, etc.)
+
+Return ONLY ONE WORD: build_feature, status, question, or action"""
+
+                    response = await local_client.create_message(
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=20,
+                        system="You are an intent classifier. Return only the intent name, nothing else."
+                    )
+
+                    intent_text = response["content"][0]["text"].strip().lower()
+
+                    # Parse the response
+                    if "build_feature" in intent_text or "build" in intent_text:
+                        return {"action": "build_feature", "confidence": 0.85, "parameters": {}}
+                    elif "status" in intent_text:
+                        return {"action": "status", "confidence": 0.9, "parameters": {}}
+                    elif "question" in intent_text:
+                        return {"action": "unknown", "confidence": 0.7, "parameters": {}}
+                    elif "action" in intent_text:
+                        return {"action": "unknown", "confidence": 0.6, "parameters": {}}
+
+                    logger.debug(f"Local LLM intent classification: {intent_text}")
+
+            except Exception as e:
+                logger.debug(f"Local LLM intent parsing failed, falling back to keywords: {e}")
+
+        # Fallback to keyword matching if local LLM unavailable or failed
         msg_lower = message.lower()
 
         if any(word in msg_lower for word in ["status", "running"]):
