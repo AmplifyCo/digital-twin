@@ -51,6 +51,9 @@ class ToolRegistry:
         # Register Calendar tool if credentials provided
         self._register_calendar_tool()
 
+        # Register X (Twitter) tool if credentials provided
+        self._register_x_tool()
+
     def register(self, tool: BaseTool):
         """Register a tool.
 
@@ -218,3 +221,21 @@ class ToolRegistry:
 
         except Exception as e:
             logger.warning(f"Failed to register Calendar tool: {e}")
+
+    def _register_x_tool(self):
+        """Register X (Twitter) tool if credentials provided in environment."""
+        try:
+            access_token = os.getenv('X_ACCESS_TOKEN')
+
+            if access_token:
+                from .x_tool import XTool
+
+                x_tool = XTool(access_token=access_token)
+
+                self.register(x_tool)
+                logger.info("🐦 X (Twitter) tool registered")
+            else:
+                logger.debug("X tool not registered (missing X_ACCESS_TOKEN in .env)")
+
+        except Exception as e:
+            logger.warning(f"Failed to register X tool: {e}")

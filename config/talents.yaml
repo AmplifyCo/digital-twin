@@ -39,10 +39,10 @@ communication:
 
 social_media:
   x:
-    enabled: false
+    enabled: true
     display_name: "Post on X"
     description: "Post updates to X (Twitter) — no auto-interactions"
-    coming_soon: true
+    coming_soon: false
     env_vars: [X_CLIENT_ID, X_CLIENT_SECRET, X_ACCESS_TOKEN]
     dt_setup_cmd: "dt-setup talent Post-on-X"
     library: xdk
