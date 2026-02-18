@@ -1,0 +1,18 @@
+[Unit]
+Description=Digital Twin Auto-Update Timer
+Requires=digital-twin-autoupdate.service
+
+[Timer]
+# Run daily at 3 AM (nightly update)
+# Change this to your preferred schedule:
+#   Hourly: OnCalendar=hourly
+#   Daily:  OnCalendar=daily (or *-*-* 03:00:00 for 3 AM)
+#   Weekly: OnCalendar=weekly (or Sun *-*-* 03:00:00 for Sunday 3 AM)
+OnCalendar=*-*-* 03:00:00
+# Run 5 minutes after boot
+OnBootSec=5min
+# If missed (system was off), run immediately
+Persistent=true
+
+[Install]
+WantedBy=timers.target

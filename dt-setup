@@ -469,6 +469,139 @@ case "$1" in
         fi
         echo ""
         ;;
+    "auto-update")
+        # Auto-update management
+        case "$2" in
+            "enable")
+                # Enable auto-updates
+                FREQUENCY="${3:-daily}"
+                echo ""
+                echo "🔄 Enabling auto-updates ($FREQUENCY)..."
+                echo ""
+
+                # Create systemd timer (if on Linux)
+                if command -v systemctl &> /dev/null; then
+                    # Determine OnCalendar value based on frequency
+                    case "$FREQUENCY" in
+                        "hourly")
+                            CALENDAR="hourly"
+                            ;;
+                        "daily"|"nightly")
+                            CALENDAR="*-*-* 03:00:00"  # 3 AM daily
+                            ;;
+                        "weekly")
+                            CALENDAR="Sun *-*-* 03:00:00"  # Sunday 3 AM
+                            ;;
+                        *)
+                            echo "❌ Invalid frequency: $FREQUENCY"
+                            echo "   Valid options: hourly, daily, weekly"
+                            exit 1
+                            ;;
+                    esac
+
+                    # Update timer file with chosen frequency
+                    TIMER_FILE="/etc/systemd/system/digital-twin-autoupdate.timer"
+                    if [ -f "$SCRIPT_DIR/deploy/systemd/digital-twin-autoupdate.timer" ]; then
+                        # Copy and modify timer file
+                        sudo cp "$SCRIPT_DIR/deploy/systemd/digital-twin-autoupdate.service" /etc/systemd/system/
+                        sudo cp "$SCRIPT_DIR/deploy/systemd/digital-twin-autoupdate.timer" /etc/systemd/system/
+
+                        # Update OnCalendar in timer file
+                        sudo sed -i "s|OnCalendar=.*|OnCalendar=$CALENDAR|" "$TIMER_FILE"
+
+                        # Reload and enable timer
+                        sudo systemctl daemon-reload
+                        sudo systemctl enable digital-twin-autoupdate.timer
+                        sudo systemctl start digital-twin-autoupdate.timer
+
+                        echo "✅ Auto-updates enabled ($FREQUENCY)"
+                        echo ""
+                        echo "Check status:"
+                        echo "  dt-setup auto-update status"
+                        echo ""
+                        echo "Run update now:"
+                        echo "  dt-setup auto-update now"
+                    else
+                        echo "❌ Timer files not found in deploy/systemd/"
+                        exit 1
+                    fi
+                else
+                    echo "⚠️  systemd not available"
+                    echo "   Auto-updates work best with systemd (Linux)"
+                    echo ""
+                    echo "Alternative: Set up a cron job manually:"
+                    echo "  crontab -e"
+                    echo "  Add: 0 3 * * * $SCRIPT_DIR/auto-update.sh"
+                fi
+                echo ""
+                ;;
+            "disable")
+                # Disable auto-updates
+                echo ""
+                echo "🛑 Disabling auto-updates..."
+                echo ""
+
+                if systemctl is-enabled --quiet digital-twin-autoupdate.timer 2>/dev/null; then
+                    sudo systemctl stop digital-twin-autoupdate.timer
+                    sudo systemctl disable digital-twin-autoupdate.timer
+                    echo "✅ Auto-updates disabled"
+                else
+                    echo "⚠️  Auto-updates not enabled"
+                fi
+                echo ""
+                ;;
+            "now")
+                # Run update check now
+                echo ""
+                echo "🔄 Running update check..."
+                echo ""
+                "$SCRIPT_DIR/auto-update.sh"
+                ;;
+            "status")
+                # Check auto-update status
+                echo ""
+                echo "🔄 Auto-Update Status"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+
+                if systemctl is-active --quiet digital-twin-autoupdate.timer 2>/dev/null; then
+                    echo "✅ Status: Enabled"
+                    echo ""
+                    systemctl status digital-twin-autoupdate.timer --no-pager | head -15
+                    echo ""
+                    echo "Next run:"
+                    systemctl list-timers digital-twin-autoupdate.timer --no-pager
+                elif command -v systemctl &> /dev/null; then
+                    echo "❌ Status: Disabled"
+                    echo ""
+                    echo "To enable:"
+                    echo "  dt-setup auto-update enable [hourly|daily|weekly]"
+                else
+                    echo "⚠️  systemd not available"
+                    echo ""
+                    echo "Check cron jobs:"
+                    echo "  crontab -l | grep auto-update"
+                fi
+                echo ""
+                ;;
+            *)
+                echo ""
+                echo "Usage: dt-setup auto-update <command>"
+                echo ""
+                echo "Commands:"
+                echo "  enable [frequency]  Enable auto-updates (hourly/daily/weekly)"
+                echo "  disable             Disable auto-updates"
+                echo "  now                 Run update check now"
+                echo "  status              Check auto-update status"
+                echo ""
+                echo "Examples:"
+                echo "  dt-setup auto-update enable daily    # Enable daily updates"
+                echo "  dt-setup auto-update enable weekly   # Enable weekly updates"
+                echo "  dt-setup auto-update now             # Check for updates now"
+                echo ""
+                ;;
+        esac
+        ;;
     "--help"|"-h"|"help")
         # Show help
         cat << EOF
@@ -503,6 +636,12 @@ Usage:
   dt-setup tunnel-stop    Stop Cloudflare Tunnel
   dt-setup tunnel-status  Check tunnel status
 
+  Auto-Update:
+  dt-setup auto-update enable [freq]  Enable auto-updates (hourly/daily/weekly)
+  dt-setup auto-update disable        Disable auto-updates
+  dt-setup auto-update now            Check for updates now
+  dt-setup auto-update status         Check auto-update status
+
 Aliases:
   digital-twin, all, full → Full setup
   start, run              → Start the bot
@@ -513,15 +652,17 @@ Aliases:
   tunnel, cf, cloudflare  → Cloudflare Tunnel configuration
 
 Examples:
-  dt-setup                # Full wizard
-  dt-setup start          # Start the bot
-  dt-setup stop           # Stop the bot
-  dt-setup restart        # Restart the bot
-  dt-setup status         # Check if running
-  dt-setup email          # Update email settings
-  dt-setup tunnel         # Configure Cloudflare Tunnel
-  dt-setup tunnel-start   # Start tunnel
-  dt-setup tunnel-stop    # Stop tunnel
+  dt-setup                          # Full wizard
+  dt-setup start                    # Start the bot
+  dt-setup stop                     # Stop the bot
+  dt-setup restart                  # Restart the bot
+  dt-setup status                   # Check if running
+  dt-setup email                    # Update email settings
+  dt-setup tunnel                   # Configure Cloudflare Tunnel
+  dt-setup tunnel-start             # Start tunnel
+  dt-setup tunnel-stop              # Stop tunnel
+  dt-setup auto-update enable daily # Enable daily auto-updates
+  dt-setup auto-update now          # Check for updates now
 
 First-time setup (TWO commands!):
   git clone https://github.com/AmplifyCo/digital-twin.git

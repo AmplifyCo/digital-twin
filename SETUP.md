@@ -287,6 +287,77 @@ dt-setup tunnel-status    # Check if tunnel is running
 dt-setup tunnel           # Update tunnel configuration
 ```
 
+## Auto-Updates (Optional)
+
+Keep your Digital Twin bot automatically updated with the latest features and bug fixes.
+
+### Enable Auto-Updates
+
+Choose your preferred update frequency:
+
+**Daily (Nightly) - Recommended:**
+```bash
+dt-setup auto-update enable daily
+```
+Updates automatically at 3 AM every day.
+
+**Weekly:**
+```bash
+dt-setup auto-update enable weekly
+```
+Updates automatically every Sunday at 3 AM.
+
+**Hourly:**
+```bash
+dt-setup auto-update enable hourly
+```
+Updates every hour (use with caution - only for active development).
+
+### What Happens During Auto-Update?
+
+1. ✅ Checks for new commits on GitHub
+2. ✅ Pulls updates if available
+3. ✅ Updates dependencies if `requirements.txt` changed
+4. ✅ Automatically restarts the bot
+5. ✅ Logs everything to `logs/auto-update.log`
+
+**Safety features:**
+- Only updates if there are changes
+- Stashes local uncommitted changes before updating
+- Preserves your `.env` configuration (never overwritten)
+
+### Manual Update Check
+
+Run an update check immediately:
+
+```bash
+dt-setup auto-update now
+```
+
+### Check Auto-Update Status
+
+See if auto-updates are enabled and when they'll run next:
+
+```bash
+dt-setup auto-update status
+```
+
+### Disable Auto-Updates
+
+Turn off automatic updates:
+
+```bash
+dt-setup auto-update disable
+```
+
+### View Update Logs
+
+Check what updates have been applied:
+
+```bash
+tail -f logs/auto-update.log
+```
+
 ## Troubleshooting
 
 ### Tools Not Appearing
