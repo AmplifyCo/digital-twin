@@ -103,10 +103,18 @@ class SubAgent:
                                 elif op in ["edit", "write"] and path:
                                     files_modified.append(path)
 
+                            # Multimodal (screenshot+text) or plain string
+                            if result.success and result.content_blocks is not None:
+                                content = result.content_blocks
+                            elif result.success:
+                                content = result.output or ""
+                            else:
+                                content = f"Error: {result.error}"
+
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": block.id,
-                                "content": result.output if result.success else f"Error: {result.error}"
+                                "content": content,
                             })
 
                     messages.append({"role": "user", "content": tool_results})

@@ -124,6 +124,17 @@ research:
     description: "Search and summarize anything on the web"
     always_available: true
 
+  browser:
+    enabled: true
+    display_name: "Web Browser"
+    description: "Browse web pages with visual verification — screenshots + text extraction"
+    always_available: true
+    server_setup: |
+      # Amazon Linux setup for full browser mode:
+      sudo yum install -y xorg-x11-server-Xvfb
+      pip install playwright
+      playwright install --with-deps chromium
+
   maps:
     enabled: false
     display_name: "Find Places"

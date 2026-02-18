@@ -26,6 +26,9 @@ class ToolResult:
     output: Optional[str] = None
     error: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Multimodal content blocks (text + images) for Anthropic API vision.
+    # When set, sent verbatim as tool_result "content" array.
+    content_blocks: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
