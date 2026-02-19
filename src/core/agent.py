@@ -25,16 +25,19 @@ class AutonomousAgent:
     def __init__(
         self,
         config: AgentConfig,
-        brain: Union[CoreBrain, DigitalCloneBrain] = None
+        brain: Union[CoreBrain, DigitalCloneBrain] = None,
+        gemini_client=None
     ):
         """Initialize the autonomous agent.
 
         Args:
             config: Agent configuration
             brain: Brain instance (CoreBrain or DigitalCloneBrain)
+            gemini_client: Optional GeminiClient for fallback when Claude fails
         """
         self.config = config
         self.api_client = AnthropicClient(config.api_key)
+        self.gemini_client = gemini_client
 
         # Load YAML config for tool registry
         yaml_config = {}
@@ -51,7 +54,8 @@ class AutonomousAgent:
         # Nervous System: state machine for tracking execution state + cancellation
         self.state_machine = AgentStateMachine()
 
-        logger.info(f"Initialized AutonomousAgent with {config.default_model}")
+        fallback = "+ Gemini fallback" if gemini_client else ""
+        logger.info(f"Initialized AutonomousAgent with {config.default_model} {fallback}")
 
     async def run(
         self,
@@ -114,13 +118,12 @@ class AutonomousAgent:
                     self.state_machine.reset()
                     return "Task cancelled."
 
-                # Call Claude API
+                # Call LLM (Claude primary, Gemini fallback)
                 self.state_machine.transition(AgentState.THINKING)
-                response = await self.api_client.create_message(
-                    model=self.config.default_model,
+                response = await self._call_llm(
                     messages=messages,
                     tools=self.tools.get_tool_definitions(),
-                    system=system_prompt,
+                    system_prompt=system_prompt,
                     max_tokens=4096
                 )
 
@@ -188,15 +191,104 @@ class AutonomousAgent:
                 else:
                     raise
 
-        # Handle max iterations reached
+        # Handle max iterations reached — try Gemini summary
         if iteration >= max_iterations and not final_result:
             logger.warning(f"Reached max iterations ({max_iterations})")
-            final_result = "Max iterations reached. Task may be incomplete."
+            final_result = await self._summarize_with_fallback(messages, system_prompt)
 
         logger.info(f"Execution complete after {iteration} iterations")
         self.state_machine.transition(AgentState.RESPONDING)
         self.state_machine.reset()
         return final_result or "Task completed"
+
+    async def _call_llm(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system_prompt: str,
+        max_tokens: int = 4096
+    ):
+        """Call LLM with automatic Gemini fallback.
+
+        Tries Claude first. If Claude fails (rate limit, API error),
+        falls back to Gemini via LiteLLM seamlessly.
+        """
+        try:
+            return await self.api_client.create_message(
+                model=self.config.default_model,
+                messages=messages,
+                tools=tools,
+                system=system_prompt,
+                max_tokens=max_tokens
+            )
+        except Exception as claude_error:
+            error_str = str(claude_error)
+            is_rate_limit = "429" in error_str or "rate_limit" in error_str
+            is_api_error = "overloaded" in error_str or "500" in error_str or "529" in error_str
+
+            if (is_rate_limit or is_api_error) and self.gemini_client and self.gemini_client.enabled:
+                logger.warning(f"⚡ Claude failed ({error_str[:80]}), falling back to Gemini...")
+                try:
+                    return await self.gemini_client.create_message(
+                        model="gemini/gemini-2.0-flash",
+                        messages=messages,
+                        tools=tools,
+                        system=system_prompt,
+                        max_tokens=max_tokens
+                    )
+                except Exception as gemini_error:
+                    logger.error(f"Gemini fallback also failed: {gemini_error}")
+                    raise claude_error  # Raise original error
+            else:
+                raise
+
+    async def _summarize_with_fallback(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str
+    ) -> str:
+        """When max iterations reached, try to generate a final response.
+
+        Uses Gemini as fallback if available, since Claude may have been
+        the reason we hit max iterations (rate limit, etc.).
+        """
+        summary_messages = messages + [{
+            "role": "user",
+            "content": "You have reached the maximum number of tool-use iterations. Based on all the tool results above, please provide a final, complete response to the user's original question. Do NOT call any more tools."
+        }]
+
+        # Try Gemini first (cheaper, less likely rate-limited)
+        if self.gemini_client and self.gemini_client.enabled:
+            try:
+                logger.info("⚡ Max iterations — using Gemini to summarize")
+                response = await self.gemini_client.create_message(
+                    model="gemini/gemini-2.0-flash",
+                    messages=summary_messages,
+                    system=system_prompt,
+                    max_tokens=2048
+                )
+                text = self._extract_text_from_response(response)
+                if text:
+                    return text
+            except Exception as e:
+                logger.warning(f"Gemini summary failed: {e}")
+
+        # Try Claude
+        try:
+            logger.info("Max iterations — using Claude to summarize")
+            response = await self.api_client.create_message(
+                model=self.config.default_model,
+                messages=summary_messages,
+                system=system_prompt,
+                max_tokens=2048
+            )
+            text = self._extract_text_from_response(response)
+            if text:
+                return text
+        except Exception as e:
+            logger.warning(f"Claude summary also failed: {e}")
+
+        return "I gathered some information but couldn't complete the full analysis. Please try again."
 
     async def _execute_tool_calls(
         self,

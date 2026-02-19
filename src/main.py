@@ -271,6 +271,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             gemini_client = GeminiClient(gemini_api_key) if gemini_api_key else None
             if gemini_client:
                 logger.info("✨ Gemini Flash enabled — intent parsing + simple chat + fallback")
+                agent.gemini_client = gemini_client  # Enable Gemini fallback in agent loop
 
             # Initialize Semantic Router (fast-path intent classification)
             semantic_router = SemanticRouter()
