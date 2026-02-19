@@ -163,5 +163,48 @@
     "tools": [
       "email"
     ]
+  },
+  {
+    "intent": "action",
+    "examples": [
+      "save contact for Pallavi",
+      "add Mom to my contacts",
+      "save John's number",
+      "remember that Sarah is my coworker",
+      "store contact info for Dad",
+      "add contact"
+    ],
+    "tools": [
+      "contacts"
+    ]
+  },
+  {
+    "intent": "action",
+    "examples": [
+      "who is Pallavi",
+      "what's Mom's number",
+      "find John's email",
+      "search contacts",
+      "list my contacts",
+      "show all contacts",
+      "lookup Dad's phone"
+    ],
+    "tools": [
+      "contacts"
+    ]
+  },
+  {
+    "intent": "action",
+    "examples": [
+      "text Mom",
+      "send WhatsApp to John",
+      "message Dad on WhatsApp",
+      "whatsapp Pallavi",
+      "send a message to Mom"
+    ],
+    "tools": [
+      "contacts",
+      "whatsapp"
+    ]
   }
 ]

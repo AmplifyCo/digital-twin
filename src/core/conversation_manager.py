@@ -1389,6 +1389,11 @@ COMMUNICATION:
 - Use tools for facts. NEVER hallucinate.
 - No XML tags, no filler. Plain text or Markdown only.
 
+CONTACTS:
+- When the user mentions a person with relationship info, phone, or email, PROACTIVELY use the contacts tool to save them.
+- When the user says "text Mom" or "email John", FIRST search contacts to get their phone/email, THEN send the message.
+- Always confirm after saving a contact.
+
 {self._security_rules}"""
 
         base_prompt = self._cached_agent_system_prompt

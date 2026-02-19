@@ -174,6 +174,12 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             agent.tools.register(whatsapp_tool)
             logger.info("📱 WhatsAppTool registered (Meta Cloud API)")
 
+        # Register ContactsTool (persistent contacts in DigitalCloneBrain)
+        from src.core.tools.contacts import ContactsTool
+        contacts_tool = ContactsTool(digital_brain=digital_brain)
+        agent.tools.register(contacts_tool)
+        logger.info("📇 ContactsTool registered")
+
         # Initialize sub-agent spawner
         api_client = AnthropicClient(config.api_key)
         agent_factory = AgentFactory(api_client, config)
