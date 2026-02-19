@@ -1034,13 +1034,13 @@ User says "good morning" → none"""
         instead of ChromaDB semantic search (which is NOT chronological).
 
         Returns:
-            Formatted conversation history string (last 3 turns)
+            Formatted conversation history string (last 7 turns)
         """
         # PRIMARY: In-memory buffer (instant, always correct order)
         if self._conversation_buffer:
             history_lines = []
-            # Get last 3 turns from buffer (already in chronological order)
-            recent_turns = list(self._conversation_buffer)[-3:]
+            # Get last 7 turns from buffer (already in chronological order)
+            recent_turns = list(self._conversation_buffer)[-7:]
             for turn in recent_turns:
                 user_msg = turn.get("user_message", "")
                 bot_msg = turn.get("assistant_response", "")
@@ -1058,9 +1058,9 @@ User says "good morning" → none"""
         try:
             channel = getattr(self, '_current_channel', None)
             try:
-                recent = await self.brain.get_recent_conversation(limit=3, channel=channel)
+                recent = await self.brain.get_recent_conversation(limit=7, channel=channel)
             except TypeError:
-                recent = await self.brain.get_recent_conversation(limit=3)
+                recent = await self.brain.get_recent_conversation(limit=7)
 
             if not recent:
                 return ""
