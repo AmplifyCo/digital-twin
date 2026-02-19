@@ -209,11 +209,14 @@ class LLMSecurityGuard:
         """
         msg_lower = message.lower()
 
-        # Sensitive data keywords
+        # Sensitive data keywords (technical + personal/financial)
         sensitive_keywords = [
             'credit card', 'password', 'api key', 'secret', 'token',
             'credential', 'private key', 'ssh key', 'database password',
-            'admin password', 'root password', 'aws key', 'google key'
+            'admin password', 'root password', 'aws key', 'google key',
+            'bank account', 'account number', 'routing number', 'ssn',
+            'social security', 'pin number', 'security code', 'cvv',
+            'phone number', 'home address', 'email address',
         ]
 
         # Action verbs
