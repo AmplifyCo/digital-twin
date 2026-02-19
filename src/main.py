@@ -28,6 +28,7 @@ from src.integrations.gemini_client import GeminiClient
 from src.core.scheduler import ReminderScheduler
 from src.core.self_healing.monitor import SelfHealingMonitor
 from src.core.memory_consolidator import MemoryConsolidator
+from src.utils.memory_backup import MemoryBackup
 
 # Setup logging — file handler is best-effort (don't crash if permission denied)
 LOG_DIR = Path("data/logs")
@@ -328,6 +329,14 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         )
         memory_consolidation_task = asyncio.create_task(memory_consolidator.start())
 
+        # Start nightly memory backup background task
+        memory_backup = MemoryBackup(
+            source_path=config.digital_clone_brain_path,
+            backup_root="./data/backups",
+            telegram=telegram
+        )
+        memory_backup_task = asyncio.create_task(memory_backup.start())
+
         # Start auto-updater background task
         auto_update_task = None
         if auto_updater.enabled:
@@ -345,6 +354,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 self_healing_task.cancel()
             if memory_consolidation_task:
                 memory_consolidation_task.cancel()
+            if memory_backup_task:
+                memory_backup_task.cancel()
             if auto_update_task:
                 auto_update_task.cancel()
             if dashboard_task:
