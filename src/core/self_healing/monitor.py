@@ -17,7 +17,7 @@ class SelfHealingMonitor:
     def __init__(
         self,
         telegram_notifier=None,
-        check_interval: int = 300,  # 5 minutes
+        check_interval: int = 43200,  # 12 hours
         log_file: str = "./data/logs/agent.log",
         auto_fix_enabled: bool = True
     ):
