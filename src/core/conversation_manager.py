@@ -1059,7 +1059,12 @@ User says "good morning" → none"""
             "post", "tweet", "send", "reply", "forward",
             "fetch", "download", "upload", "search",
             "check", "read", "schedule", "list", "show",
-            "email"
+            "email",
+            # Query/lookup verbs (so "do you have X?" routes to agent)
+            "find", "lookup", "get", "have", "know",
+            # Contact/data nouns (trigger tool access)
+            "contact", "phone", "number", "remind", "calendar",
+            "ping", "message", "text",
         }
 
         if hasattr(self.agent, 'tools'):
