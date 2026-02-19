@@ -1,12 +1,12 @@
 """Auto-fix system for attempting to resolve detected errors."""
 
 import asyncio
-from datetime import datetime
-from typing import Optional, Dict, Any, List
-from pathlib import Path
+import logging
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 
 from .error_detector import DetectedError, ErrorType, ErrorSeverity
 
