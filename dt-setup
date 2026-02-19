@@ -224,35 +224,31 @@ fi
 # Auto-install dependencies if needed
 # ============================================
 check_and_install_dependencies() {
-    # Check if anthropic package is installed (key dependency)
-    if ! python3 -c "import anthropic" 2>/dev/null; then
-        echo ""
-        echo "📦 Dependencies not found. Installing required packages..."
-        echo ""
+    echo "📦 Checking dependencies..."
+    echo ""
 
-        # Check if requirements.txt exists
-        if [ ! -f "$REQUIREMENTS_TXT" ]; then
-            echo "⚠️  Warning: requirements.txt not found at $REQUIREMENTS_TXT"
-            echo "   Skipping dependency installation."
-            echo ""
-            return
-        fi
-
-        # Install dependencies
-        echo "Running: pip install -r requirements.txt"
+    # Check if requirements.txt exists
+    if [ ! -f "$REQUIREMENTS_TXT" ]; then
+        echo "⚠️  Warning: requirements.txt not found at $REQUIREMENTS_TXT"
+        echo "   Skipping dependency installation."
         echo ""
+        return
+    fi
 
-        if python3 -m pip install -r "$REQUIREMENTS_TXT"; then
-            echo ""
-            echo "✅ Dependencies installed successfully!"
-            echo ""
-        else
-            echo ""
-            echo "❌ Failed to install dependencies."
-            echo "   Please run manually: pip install -r requirements.txt"
-            echo ""
-            exit 1
-        fi
+    # ALWAYS check/install dependencies to catch new requirements (like litellm/chromadb)
+    echo "Running: pip install -r requirements.txt"
+    echo ""
+
+    if python3 -m pip install -r "$REQUIREMENTS_TXT"; then
+        echo ""
+        echo "✅ Dependencies installed/verified successfully!"
+        echo ""
+    else
+        echo ""
+        echo "❌ Failed to install dependencies."
+        echo "   Please run manually: pip install -r requirements.txt"
+        echo ""
+        exit 1
     fi
 }
 
@@ -260,6 +256,10 @@ check_and_install_dependencies() {
 if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" ]]; then
     check_python
 fi
+
+# Create data directories and set permissions if needed
+mkdir -p "$SCRIPT_DIR/data" "$SCRIPT_DIR/logs"
+chmod 755 "$SCRIPT_DIR/data" "$SCRIPT_DIR/logs"
 
 # Check dependencies before running configuration (unless --help or start/run)
 if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" && "$1" != "start" && "$1" != "run" ]]; then
