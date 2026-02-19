@@ -36,6 +36,7 @@ class VectorDatabase:
         self._init_client(path, collection_name, embedding_model)
         logger.info(f"Initialized vector DB at {path}, collection: {collection_name}")
 
+    def _init_client(self, path: str, collection_name: str, embedding_model: str):
         """Initialize ChromaDB client, auto-recovering from corruption if needed."""
         try:
             # Explicitly create directory (parents=True) to avoid FileNotFoundError
