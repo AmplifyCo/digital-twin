@@ -125,11 +125,24 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     fi
 
     # Refresh global dt-setup if it changed and is installed globally
+    # Refresh global dt-setup if it changed and is installed globally
     GLOBAL_DT="/usr/local/bin/dt-setup"
     if [ -f "$GLOBAL_DT" ] && git diff --name-only "$LOCAL" "$REMOTE" | grep -q "^dt-setup$"; then
         log "🔧 dt-setup changed, updating global copy..."
-        sudo cp "$SCRIPT_DIR/dt-setup" "$GLOBAL_DT" && sudo chmod +x "$GLOBAL_DT"
-        log "✅ Global dt-setup updated"
+        if sudo cp "$SCRIPT_DIR/dt-setup" "$GLOBAL_DT" && sudo chmod +x "$GLOBAL_DT"; then
+             log "✅ Global dt-setup updated"
+        else
+             log "⚠️ Failed to update global dt-setup (sudo required)"
+        fi
+    fi
+
+    # Refresh local dt-setup if it changed and is installed locally
+    LOCAL_DT="$HOME/.local/bin/dt-setup"
+    if [ -f "$LOCAL_DT" ] && git diff --name-only "$LOCAL" "$REMOTE" | grep -q "^dt-setup$"; then
+        log "🔧 dt-setup changed, updating local copy..."
+        mkdir -p "$(dirname "$LOCAL_DT")"
+        cp "$SCRIPT_DIR/dt-setup" "$LOCAL_DT" && chmod +x "$LOCAL_DT"
+        log "✅ Local dt-setup updated"
     fi
 
     # Restart the bot

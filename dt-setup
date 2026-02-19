@@ -9,14 +9,18 @@
 #   dt-setup run            # Start the bot (alias)
 
 # Get the directory where this script is located
+# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="/usr/local/bin"
+DEFAULT_GLOBAL_DIR="/usr/local/bin"
+DEFAULT_LOCAL_DIR="$HOME/.local/bin"
 COMMAND_NAME="dt-setup"
 
 # If running from the install location, look for a stored project directory
-if [[ "$SCRIPT_DIR" == "$INSTALL_DIR" ]]; then
+# If running from the install location, look for a stored project directory
+# Check if we are running the installed version (global or local)
+if [[ "$SCRIPT_DIR" == "$DEFAULT_GLOBAL_DIR" ]] || [[ "$SCRIPT_DIR" == "$DEFAULT_LOCAL_DIR" ]]; then
     # Check for a stored project path written at install time
-    STORED_PROJECT_DIR_FILE="$INSTALL_DIR/.dt-setup-project-dir"
+    STORED_PROJECT_DIR_FILE="$SCRIPT_DIR/.dt-setup-project-dir"
     if [ -f "$STORED_PROJECT_DIR_FILE" ]; then
         SCRIPT_DIR="$(cat "$STORED_PROJECT_DIR_FILE")"
     fi
@@ -139,44 +143,95 @@ check_and_install_cloudflared() {
 # ============================================
 # Self-installation check
 # ============================================
-install_globally() {
+install_script() {
     echo ""
-    echo "🔧 Installing dt-setup globally..."
-    echo "   This allows you to run 'dt-setup' from anywhere (like git, python, npm)"
-    echo ""
+    echo "🔧 Installing dt-setup command..."
+    
+    # Detect if we should default to global or local
+    if [ "$(id -u)" -eq 0 ]; then
+        TARGET_DIR="$DEFAULT_GLOBAL_DIR"
+        IS_GLOBAL=true
+    else
+        echo "Choose installation location:"
+        echo "  1) Global (/usr/local/bin) - Requires sudo, available to all users"
+        echo "  2) Local  (~/.local/bin)   - No sudo, available to you only"
+        read -p "Select [1/2] (default: 2): " install_choice
+        install_choice=${install_choice:-2}
+        
+        if [[ "$install_choice" == "1" ]]; then
+            TARGET_DIR="$DEFAULT_GLOBAL_DIR"
+            IS_GLOBAL=true
+        else
+            TARGET_DIR="$DEFAULT_LOCAL_DIR"
+            IS_GLOBAL=false
+        fi
+    fi
+
+    echo "   Installing to $TARGET_DIR..."
+    
+    # Create directory if missing
+    if [ "$IS_GLOBAL" = true ]; then
+        if [ ! -d "$TARGET_DIR" ]; then
+             sudo mkdir -p "$TARGET_DIR"
+        fi
+        CP_CMD="sudo cp"
+        CHMOD_CMD="sudo chmod"
+        TEE_CMD="sudo tee"
+    else
+        mkdir -p "$TARGET_DIR"
+        CP_CMD="cp"
+        CHMOD_CMD="chmod"
+        TEE_CMD="tee"
+    fi
 
     # Make script executable
     chmod +x "$0"
     chmod +x "$CONFIGURE_PY"
 
-    # Check if /usr/local/bin exists
-    if [ ! -d "$INSTALL_DIR" ]; then
-        echo "   Creating $INSTALL_DIR..."
-        sudo mkdir -p "$INSTALL_DIR"
-    fi
-
-    # Copy script and store the project directory so the global install can find it
-    echo "   Copying to $INSTALL_DIR/$COMMAND_NAME"
-    if sudo cp "$0" "$INSTALL_DIR/$COMMAND_NAME" && sudo chmod +x "$INSTALL_DIR/$COMMAND_NAME" \
-        && echo "$SCRIPT_DIR" | sudo tee "$INSTALL_DIR/.dt-setup-project-dir" > /dev/null; then
+    # Copy script and store the project directory
+    if $CP_CMD "$0" "$TARGET_DIR/$COMMAND_NAME" && $CHMOD_CMD +x "$TARGET_DIR/$COMMAND_NAME" \
+        && echo "$SCRIPT_DIR" | $TEE_CMD "$TARGET_DIR/.dt-setup-project-dir" > /dev/null; then
         echo ""
         echo "✅ dt-setup installed successfully!"
+        
+        # Handle PATH for locally installed
+        if [ "$IS_GLOBAL" = false ]; then
+             if [[ ":$PATH:" != *":$TARGET_DIR:"* ]]; then
+                 echo "⚠️  $TARGET_DIR is not in your PATH."
+                 echo "   Adding to ~/.bashrc and ~/.zshrc..."
+                 echo "export PATH=\"\$PATH:$TARGET_DIR\"" >> "$HOME/.bashrc"
+                 [ -f "$HOME/.zshrc" ] && echo "export PATH=\"\$PATH:$TARGET_DIR\"" >> "$HOME/.zshrc"
+                 echo "   Please restart your shell or run: source ~/.bashrc"
+             fi
+        fi
+        
         echo "   You can now run 'dt-setup' from any directory"
         echo ""
     else
         echo ""
-        echo "❌ Installation failed. Continuing with local setup..."
-        echo ""
+        echo "❌ Installation failed."
         return 1
     fi
 
     # Configure sudoers for systemd service management (Linux only)
+    # Only if user wants to enable service management
     if [[ -f /etc/os-release ]] && command -v systemctl &> /dev/null; then
-        CURRENT_USER=$(whoami)
-        SUDOERS_FILE="/etc/sudoers.d/digital-twin"
         echo "🔐 Configuring sudo permissions for service management..."
-        sudo tee "$SUDOERS_FILE" > /dev/null << SUDOERS_EOF
-# Digital Twin - limited sudo for service management
+        echo "   This allows 'dt-setup start/stop' without typing password every time."
+        if [ "$IS_GLOBAL" = false ]; then
+             read -p "   Enable sudo access for digital-twin service? (Requires sudo password now) [Y/n]: " sudo_choice
+             sudo_choice=${sudo_choice:-Y}
+        else
+             sudo_choice="Y"
+        fi
+        
+        if [[ "$sudo_choice" =~ ^[Yy]$ ]]; then
+            CURRENT_USER=$(whoami)
+            SUDOERS_FILE="/etc/sudoers.d/digital-twin"
+            
+            # Write sudoers file
+            # Use a temporary file logic or just sudo tee
+            if echo "# Digital Twin - limited sudo
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop digital-twin
@@ -184,38 +239,52 @@ $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl status digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl start digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl stop digital-twin
-$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl status digital-twin
-SUDOERS_EOF
-        sudo chmod 440 "$SUDOERS_FILE"
-        echo "✅ Sudo permissions configured (systemctl for digital-twin only)"
-        echo ""
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl status digital-twin" | sudo tee "$SUDOERS_FILE" > /dev/null; then
+                sudo chmod 440 "$SUDOERS_FILE"
+                echo "✅ Sudo permissions configured"
+            else
+                echo "⚠️  Failed to configure sudo permissions (skipping)"
+            fi
+        fi
     fi
 
     return 0
 }
 
-# Check if running locally and not installed globally
-if [[ "$0" == "./"* ]] || [[ "$0" == *"/dt-setup" && ! -f "$INSTALL_DIR/$COMMAND_NAME" ]]; then
-    # Running from local directory and not installed globally
-    if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" && "$1" != "--skip-install" ]]; then
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  Welcome to Digital Twin Setup!"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "First-time setup detected."
-        echo ""
+# Check if running locally and not installed (checked by presence in common paths)
+# We check if 'dt-setup' command exists in PATH and if it resolves to this script??
+# Simpler: If argument 0 is relative path, prompt install
+if [[ "$0" == "./"* ]] || [[ "$0" == *"/dt-setup" ]]; then
+    # Check if installed versions exist
+    INSTALLED_GLOBAL="$DEFAULT_GLOBAL_DIR/$COMMAND_NAME"
+    INSTALLED_LOCAL="$DEFAULT_LOCAL_DIR/$COMMAND_NAME"
+    
+    IS_INSTALLED=false
+    if [ -f "$INSTALLED_GLOBAL" ] || [ -f "$INSTALLED_LOCAL" ]; then
+        IS_INSTALLED=true
+    fi
 
-        read -p "Install dt-setup globally? (recommended) [Y/n]: " install_choice
-        install_choice=${install_choice:-Y}
-
-        if [[ "$install_choice" =~ ^[Yy]$ ]]; then
-            install_globally
-        else
+    if [ "$IS_INSTALLED" = false ]; then 
+        if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" && "$1" != "--skip-install" ]]; then
             echo ""
-            echo "⏭️  Skipping global installation."
-            echo "   You can install later with: make install"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Welcome to Digital Twin Setup!"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
+            echo "First-time setup detected."
+            echo ""
+    
+            read -p "Install dt-setup command? (recommended) [Y/n]: " install_choice
+            install_choice=${install_choice:-Y}
+    
+            if [[ "$install_choice" =~ ^[Yy]$ ]]; then
+                install_script
+            else
+                echo ""
+                echo "⏭️  Skipping installation."
+                echo "   You can install later with: ./dt-setup"
+                echo ""
+            fi
         fi
     fi
 fi
