@@ -332,8 +332,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         # Start nightly memory backup background task
         memory_backup = MemoryBackup(
             source_path=config.digital_clone_brain_path,
-            backup_root="./data/backups",
-            telegram=telegram
+            backup_root="./data/backups"
         )
         memory_backup_task = asyncio.create_task(memory_backup.start())
 

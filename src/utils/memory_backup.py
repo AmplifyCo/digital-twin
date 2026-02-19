@@ -100,14 +100,5 @@ class MemoryBackup:
             if purged:
                 logger.info(f"🗑️  Purged {len(purged)} old backup(s): {', '.join(purged)}")
 
-            if self.telegram:
-                await self.telegram.notify(
-                    f"🗄️ Memory backup complete\n`{dest.name}`"
-                    + (f"\nPurged {len(purged)} old backup(s)" if purged else ""),
-                    level="info"
-                )
-
         except Exception as e:
             logger.error(f"Memory backup failed: {e}", exc_info=True)
-            if self.telegram:
-                await self.telegram.notify(f"⚠️ Memory backup failed: {e}", level="warning")
