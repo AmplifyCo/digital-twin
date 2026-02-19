@@ -810,18 +810,41 @@ RULES:
 
             chat_model = self.router.select_model_for_chat(len(message))
 
-            response = await self.anthropic_client.create_message(
-                model=chat_model,
-                max_tokens=300,
-                system=system_prompt,
-                messages=[{"role": "user", "content": message}]
-            )
+            # Try primary model (Claude)
+            try:
+                response = await self.anthropic_client.create_message(
+                    model=chat_model,
+                    max_tokens=300,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": message}]
+                )
+                return response.content[0].text.strip()
+            except Exception as claude_err:
+                logger.warning(f"Chat Claude failed ({str(claude_err)[:60]}), trying Gemini...")
 
-            return response.content[0].text.strip()
+            # Fallback: Gemini Flash for chat
+            if self.gemini_client and self.gemini_client.enabled:
+                try:
+                    response = await self.gemini_client.create_message(
+                        model="gemini/gemini-2.0-flash",
+                        messages=[{"role": "user", "content": message}],
+                        system=system_prompt,
+                        max_tokens=300
+                    )
+                    text = ""
+                    for block in response.content:
+                        if hasattr(block, 'text'):
+                            text += block.text
+                    if text.strip():
+                        return text.strip()
+                except Exception as gemini_err:
+                    logger.error(f"Chat Gemini also failed: {gemini_err}")
+
+            return "Hey! I'm having a moment — try again in a sec. 😊"
 
         except Exception as e:
             logger.error(f"Chat error: {e}")
-            return "I'm not sure how to respond. Try asking about my status!"
+            return "Hey! I'm having a moment — try again in a sec. 😊"
 
     async def _learn_from_conversation(self, user_message: str, bot_response: str):
         """Extract and store learnable facts from casual conversation.
