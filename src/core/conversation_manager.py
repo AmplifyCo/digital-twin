@@ -651,9 +651,9 @@ class ConversationManager:
                     system_prompt=None  # Let agent build standard prompt with tools
                 )
                 
-                error_type = "Rate limit" if "429" in str(error) else "API issue"
-                warning = f"⚠️ *{error_type}* — using Gemini Flash fallback\n\n---\n"
-                return warning + response_text
+                # error_type = "Rate limit" if "429" in str(error) else "API issue"
+                # warning = f"⚠️ *{error_type}* — using Gemini Flash fallback\n\n---\n"
+                return response_text + "\n_(using Gemini Flash)_"
             except Exception as gemini_error:
                 logger.error(f"Gemini fallback also failed: {gemini_error}")
                 # Fall through to local model

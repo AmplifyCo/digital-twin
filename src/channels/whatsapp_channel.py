@@ -118,6 +118,10 @@ class WhatsAppChannel:
 
             logger.info(f"📩 WhatsApp received from {from_number}: {body[:50]}...")
 
+            msg_id = message.get("id")
+            if msg_id:
+                asyncio.create_task(self.mark_as_read(msg_id))
+
             # Process asynchronously
             asyncio.create_task(self._process_and_respond(body, from_number))
 
@@ -185,3 +189,26 @@ class WhatsAppChannel:
 
         except Exception as e:
             logger.error(f"Failed to send WhatsApp (Network): {e}")
+
+    async def mark_as_read(self, message_id: str):
+        """Mark message as read (Blue Ticks)."""
+        if not self.enabled: return
+        
+        url = f"https://graph.facebook.com/v21.0/{self.phone_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=data) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"Failed to mark read: {await resp.text()}")
+        except Exception as e:
+            logger.error(f"Failed to mark read: {e}")
