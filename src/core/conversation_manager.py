@@ -498,7 +498,7 @@ class ConversationManager:
             # We pass pii_map even for chat, though usually less critical unless it echoes back
             response = await self.agent.run(
                 task=message,
-                max_iterations=1,
+                max_iterations=3,
                 system_prompt=system_prompt,
                 pii_map=pii_map
             )
