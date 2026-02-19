@@ -121,10 +121,11 @@ class ConversationManager:
         # can understand "yes"/"do it" without history truncation losing the proposal.
         self._last_bot_response: Optional[str] = None
 
-        # In-memory conversation buffer: reliable short-term context (last 10 turns)
-        # ChromaDB semantic search is NOT chronological — this deque is.
-        # Each entry: {"user_message": str, "assistant_response": str, "timestamp": str}
-        self._conversation_buffer: deque = deque(maxlen=10)
+        # In-memory conversation buffer: per-user, reliable short-term context
+        # Dict[user_id, deque] — each user gets their own isolated history
+        # ChromaDB semantic search is NOT chronological — these deques are.
+        self._conversation_buffers: Dict[str, deque] = {}
+        self._current_user_id: Optional[str] = None  # Set per-request
 
         # Daily conversation log: persistent chronological record
         # Stored as JSONL at data/conversations/YYYY-MM-DD.jsonl
@@ -167,7 +168,7 @@ class ConversationManager:
             logger.warning(f"Failed to save daily conversation log: {e}")
 
     def _load_todays_conversations(self):
-        """Load today's conversations from the daily log into the in-memory buffer.
+        """Load today's conversations from the daily log into per-user buffers.
 
         Called on startup so context survives service restarts.
         """
@@ -178,25 +179,33 @@ class ConversationManager:
                 logger.info("No conversation log for today yet")
                 return
 
-            turns = []
+            count = 0
             with open(log_file, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line:
                         try:
-                            turns.append(json.loads(line))
+                            turn = json.loads(line)
+                            uid = turn.get("user_id", "default")
+                            if uid not in self._conversation_buffers:
+                                self._conversation_buffers[uid] = deque(maxlen=10)
+                            self._conversation_buffers[uid].append(turn)
+                            count += 1
                         except json.JSONDecodeError:
                             continue
 
-            # Load the last N turns into buffer (deque maxlen handles overflow)
-            for turn in turns:
-                self._conversation_buffer.append(turn)
+            # Restore last bot response from the most recent turn overall
+            # (find the latest turn across all users)
+            latest = None
+            for buf in self._conversation_buffers.values():
+                if buf:
+                    last = buf[-1]
+                    if latest is None or last.get("timestamp", "") > latest.get("timestamp", ""):
+                        latest = last
+            if latest:
+                self._last_bot_response = latest.get("assistant_response")
 
-            # Restore last bot response for "yes"/"do it" continuity
-            if turns:
-                self._last_bot_response = turns[-1].get("assistant_response")
-
-            logger.info(f"Loaded {len(turns)} conversation turns from today's log")
+            logger.info(f"Loaded {count} conversation turns for {len(self._conversation_buffers)} user(s) from today's log")
         except Exception as e:
             logger.warning(f"Failed to load today's conversations: {e}")
 
@@ -291,8 +300,9 @@ class ConversationManager:
 
             logger.info(f"[{trace_id}] Processing message from {channel}: {message[:50]}...")
 
-            # Store channel + callback for use by other methods (brain context isolation)
+            # Store channel + callback + user for use by other methods
             self._current_channel = channel
+            self._current_user_id = user_id or channel  # Track who we're talking to
             self._progress_callback = progress_callback
 
             # Start periodic updates ONLY if enabled (default: disabled)
@@ -373,15 +383,20 @@ class ConversationManager:
                     }
                 )
 
-            # In-memory buffer: instant, reliable short-term context
+            # In-memory buffer: per-user, instant, reliable short-term context
+            buffer_key = user_id or channel or "default"
+            if buffer_key not in self._conversation_buffers:
+                self._conversation_buffers[buffer_key] = deque(maxlen=10)
+
             turn = {
                 "user_message": message,
                 "assistant_response": filtered_response,
                 "timestamp": datetime.now().isoformat(),
                 "channel": channel,
-                "model": self._last_model_used
+                "model": self._last_model_used,
+                "user_id": buffer_key
             }
-            self._conversation_buffer.append(turn)
+            self._conversation_buffers[buffer_key].append(turn)
 
             # Persist to daily log file (chronological, survives restarts)
             self._save_to_daily_log(turn)
@@ -1093,17 +1108,19 @@ User says "good morning" → none"""
     async def _get_recent_history_for_intent(self) -> str:
         """Get recent conversation history formatted for intent classification.
 
-        Uses the in-memory conversation buffer (reliable, chronological)
+        Uses the per-user in-memory conversation buffer (reliable, chronological)
         instead of ChromaDB semantic search (which is NOT chronological).
 
         Returns:
-            Formatted conversation history string (last 7 turns)
+            Formatted conversation history string (last 7 turns for current user)
         """
-        # PRIMARY: In-memory buffer (instant, always correct order)
-        if self._conversation_buffer:
+        # PRIMARY: Per-user in-memory buffer (instant, correct order, isolated)
+        current_user = getattr(self, '_current_user_id', None) or 'default'
+        user_buffer = self._conversation_buffers.get(current_user)
+
+        if user_buffer:
             history_lines = []
-            # Get last 7 turns from buffer (already in chronological order)
-            recent_turns = list(self._conversation_buffer)[-7:]
+            recent_turns = list(user_buffer)[-7:]
             for turn in recent_turns:
                 user_msg = turn.get("user_message", "")
                 bot_msg = turn.get("assistant_response", "")
