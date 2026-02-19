@@ -152,19 +152,10 @@ install_script() {
         TARGET_DIR="$DEFAULT_GLOBAL_DIR"
         IS_GLOBAL=true
     else
-        echo "Choose installation location:"
-        echo "  1) Global (/usr/local/bin) - Requires sudo, available to all users"
-        echo "  2) Local  (~/.local/bin)   - No sudo, available to you only"
-        read -p "Select [1/2] (default: 2): " install_choice
-        install_choice=${install_choice:-2}
-        
-        if [[ "$install_choice" == "1" ]]; then
-            TARGET_DIR="$DEFAULT_GLOBAL_DIR"
-            IS_GLOBAL=true
-        else
-            TARGET_DIR="$DEFAULT_LOCAL_DIR"
-            IS_GLOBAL=false
-        fi
+        # Default to local install for non-root users (Zero Touch)
+        TARGET_DIR="$DEFAULT_LOCAL_DIR"
+        IS_GLOBAL=false
+        echo "   Target: $TARGET_DIR (Local User)"
     fi
 
     echo "   Installing to $TARGET_DIR..."
@@ -216,22 +207,27 @@ install_script() {
     # Configure sudoers for systemd service management (Linux only)
     # Only if user wants to enable service management
     if [[ -f /etc/os-release ]] && command -v systemctl &> /dev/null; then
-        echo "🔐 Configuring sudo permissions for service management..."
-        echo "   This allows 'dt-setup start/stop' without typing password every time."
-        if [ "$IS_GLOBAL" = false ]; then
-             read -p "   Enable sudo access for digital-twin service? (Requires sudo password now) [Y/n]: " sudo_choice
-             sudo_choice=${sudo_choice:-Y}
-        else
-             sudo_choice="Y"
+        echo "🔐 Configuring system integration..."
+        
+        # Check if we have sudo access or need to ask
+        NEED_SUDO_PASS=true
+        if sudo -n true 2>/dev/null; then
+            NEED_SUDO_PASS=false
         fi
         
-        if [[ "$sudo_choice" =~ ^[Yy]$ ]]; then
-            CURRENT_USER=$(whoami)
-            SUDOERS_FILE="/etc/sudoers.d/digital-twin"
-            
-            # Write sudoers file
-            # Use a temporary file logic or just sudo tee
-            if echo "# Digital Twin - limited sudo
+        if [ "$IS_GLOBAL" = false ]; then
+             if [ "$NEED_SUDO_PASS" = true ]; then
+                 echo "   ⚠️  Sudo password required to enable system service (one-time setup)."
+                 echo "      (Press Enter to continue or Ctrl+C to skip service setup)"
+                 read -r _ignored
+             fi
+        fi
+        
+        CURRENT_USER=$(whoami)
+        SUDOERS_FILE="/etc/sudoers.d/digital-twin"
+        
+        # Write sudoers file
+        if echo "# Digital Twin - limited sudo
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop digital-twin
@@ -240,11 +236,44 @@ $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl start digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl stop digital-twin
 $CURRENT_USER ALL=(ALL) NOPASSWD: /bin/systemctl status digital-twin" | sudo tee "$SUDOERS_FILE" > /dev/null; then
-                sudo chmod 440 "$SUDOERS_FILE"
-                echo "✅ Sudo permissions configured"
+            sudo chmod 440 "$SUDOERS_FILE"
+            echo "✅ Integration complete"
+            
+            # Auto-enable service?
+            # We need to install the service file first? Auto-update handles it?
+            # Or dt-setup should ensure service file is installed.
+            SERVICE_SOURCE="$SCRIPT_DIR/digital-twin.service"
+            
+            if [ -f "$SERVICE_SOURCE" ]; then
+                 echo "🔧 Generating service file for current user/path..."
+                 
+                 # Create temp file with correct paths
+                 TEMP_SERVICE=$(mktemp)
+                 cp "$SERVICE_SOURCE" "$TEMP_SERVICE"
+                 
+                 # Update User, Group, WorkingDirectory, ExecStart
+                 # Use | as delimiter for sed to avoid path issues
+                 sed -i "s|User=.*|User=$CURRENT_USER|g" "$TEMP_SERVICE"
+                 sed -i "s|Group=.*|Group=$(id -gn)|g" "$TEMP_SERVICE"
+                 sed -i "s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|g" "$TEMP_SERVICE"
+                 # Update ExecStart to match venv path
+                 sed -i "s|ExecStart=.*|ExecStart=$SCRIPT_DIR/venv/bin/python src/watchdog.py|g" "$TEMP_SERVICE"
+                 # Update PATH environment variable if present
+                 sed -i "s|Environment=\"PATH=.*|Environment=\"PATH=$SCRIPT_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"|g" "$TEMP_SERVICE"
+                 
+                 echo "   Installing service file..."
+                 sudo cp "$TEMP_SERVICE" "/etc/systemd/system/digital-twin.service"
+                 rm -f "$TEMP_SERVICE"
+                 
+                 sudo systemctl daemon-reload
+                 sudo systemctl enable digital-twin
+                 echo "✅ Service enabled"
             else
-                echo "⚠️  Failed to configure sudo permissions (skipping)"
+                 echo "⚠️  Service file not found at $SERVICE_SOURCE"
             fi
+            
+        else
+            echo "⚠️  Failed to configure system integration (skipping)"
         fi
     fi
 
@@ -274,8 +303,9 @@ if [[ "$0" == "./"* ]] || [[ "$0" == *"/dt-setup" ]]; then
             echo "First-time setup detected."
             echo ""
     
-            read -p "Install dt-setup command? (recommended) [Y/n]: " install_choice
-            install_choice=${install_choice:-Y}
+            # Auto-install without prompting (Zero Touch)
+            # read -p "Install dt-setup command? (recommended) [Y/n]: " install_choice
+            install_choice="Y" # Force yes
     
             if [[ "$install_choice" =~ ^[Yy]$ ]]; then
                 install_script
@@ -376,10 +406,28 @@ start_bot_if_requested() {
             echo "🚀 Starting Digital Twin bot..."
             echo ""
 
+            # Check if Cloudflare Tunnel is configured and start it
+            if [ -f "$SCRIPT_DIR/.env" ] && grep -q "^CLOUDFLARE_TUNNEL_TOKEN=" "$SCRIPT_DIR/.env"; then
+                echo "🌐 Starting Cloudflare Tunnel..."
+                "$SCRIPT_DIR/dt-setup" tunnel-start
+            fi
+
             # Check if we're in the right directory
             if [ -f "$SCRIPT_DIR/src/main.py" ]; then
                 cd "$SCRIPT_DIR"
-                python3 -m src.main
+                
+                # Check if systemd is configured and working
+                if command -v systemctl &> /dev/null && systemctl is-enabled --quiet digital-twin 2>/dev/null; then
+                    echo "🚀 Starting service via systemd..."
+                    sudo systemctl start digital-twin
+                    sudo systemctl status digital-twin --no-pager | head -15
+                    echo ""
+                    echo "✅ Bot started in background (Systemd Service)"
+                    echo "   View logs: journalctl -u digital-twin -f"
+                else
+                    echo "🚀 Starting bot (Foreground)..."
+                    python3 -m src.main
+                fi
             else
                 echo "❌ Error: src/main.py not found"
                 echo "   Please run manually: python -m src.main"

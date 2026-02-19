@@ -10,9 +10,9 @@ cd digital-twin && ./dt-setup
 ```
 
 **That's it!** The script handles everything:
-- ✅ Installs itself globally
+- ✅ Auto-installs locally (no sudo needed)
 - ✅ Installs dependencies
-- ✅ Configures credentials
+- ✅ Configures system services & auto-start
 - ✅ Sets up email/calendar tools
 - ✅ Ready to run!
 
@@ -33,10 +33,10 @@ $ ./dt-setup
 
 First-time setup detected.
 
-Install dt-setup globally? (recommended) [Y/n]: y
+First-time setup detected.
 
-🔧 Installing dt-setup globally...
-   This allows you to run 'dt-setup' from anywhere (like git, python, npm)
+   Target: ~/.local/bin (Local User)
+   Installing to ~/.local/bin...
 
 ✅ dt-setup installed successfully!
 
@@ -65,8 +65,6 @@ Enter Anthropic API key: sk-ant-xxxxx
 
 ✅ Core configuration complete!
 
-Configure email? (y/n) [n]: y
-
 📧 EMAIL CONFIGURATION
 
 Enter your email address: john@gmail.com
@@ -83,8 +81,6 @@ Enter app password: [hidden]
 🎉 Setup Complete!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Start the bot now? [Y/n]: y
 
 🚀 Starting Digital Twin bot...
 
