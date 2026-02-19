@@ -650,15 +650,31 @@ class ConversationManager:
             return clarify_question
 
         elif action == "conversation":
-            # Pure conversation — but check if Haiku inferred a task anyway
-            if inferred_task:
-                logger.info(f"Conversation with inferred task: {inferred_task} - using agent")
+            # Pure conversation — but check if it needs tools (contacts, lookups)
+            msg_lower = message.lower()
+
+            # Keywords that imply tool access is needed even for "conversational" messages
+            needs_tools = (
+                inferred_task or
+                any(kw in msg_lower for kw in [
+                    "contact", "phone", "number", "email", "address",
+                    "find", "look up", "lookup", "do you have", "do you know",
+                    "search", "save", "add", "delete", "remove",
+                    "remind", "schedule", "calendar", "text", "message", "ping",
+                ])
+            )
+
+            if needs_tools:
+                logger.info(f"Conversation needs tools (keywords detected) - using agent")
                 self._last_model_used = "claude-sonnet-4-5"
+                model_tier = self._get_model_tier(message)
                 return await self.agent.run(
                     task=agent_task,
                     max_iterations=15,
-                    system_prompt=await self._build_system_prompt(message)
+                    system_prompt=await self._build_system_prompt(message),
+                    model_tier=model_tier
                 )
+
             logger.info("Pure conversation - using chat")
             self._last_model_used = "claude-sonnet-4-5"
             response = await self._chat(message)
