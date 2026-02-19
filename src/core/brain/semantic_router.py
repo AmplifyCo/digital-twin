@@ -19,7 +19,7 @@ class SemanticRouter:
 
     def __init__(
         self,
-        db_path: str = "data/chroma_semantic",
+        db_path: str = "data/lancedb_semantic",
         golden_intents_path: str = "data/golden_intents.json",
         threshold: float = 0.90
     ):

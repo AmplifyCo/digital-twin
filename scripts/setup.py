@@ -14,7 +14,7 @@ def setup():
 
     # 1. Create directory structure
     dirs = [
-        "data/chroma",
+        "data/lancedb",
         "data/core_brain",
         "data/digital_clone_brain",
         "data/memory",
@@ -46,7 +46,7 @@ def setup():
     print("Checking dependencies...")
     try:
         import anthropic
-        import chromadb
+        import lancedb
         import yaml
         import aiofiles
         print("✓ All dependencies installed")

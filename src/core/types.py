@@ -63,7 +63,7 @@ class AgentConfig:
     self_build_mode: bool = True
 
     # Brain
-    vector_db_path: str = "./data/chroma"
+    vector_db_path: str = "./data/lancedb"
     core_brain_path: str = "./data/core_brain"
     digital_clone_brain_path: str = "./data/digital_clone_brain"
     memory_path: str = "./data/memory"

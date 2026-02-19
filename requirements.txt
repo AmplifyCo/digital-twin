@@ -9,9 +9,10 @@ litellm>=1.57.0
 python-dotenv>=1.0.0
 aiofiles>=23.2.1
 
-# Brain - Vector Database (using default embeddings, no PyTorch)
-# Brain - Vector Database (using default embeddings, no PyTorch)
-chromadb>=0.4.22
+# Brain - Vector Database (LanceDB — ACID-compliant, crash-safe)
+lancedb>=0.6.0
+sentence-transformers>=2.2.0
+pyarrow>=14.0.0
 pydantic-settings>=2.0.0
 
 # Monitoring & Notifications
@@ -50,9 +51,6 @@ pytz>=2023.3
 # ================================================
 # OPTIONAL DEPENDENCIES - Install separately if needed
 # ================================================
-# For better embeddings (requires 1GB+ PyTorch):
-#   pip install sentence-transformers
-#
 # For multi-channel support:
 #   pip install discord.py slack-bolt slack-sdk
 #

@@ -62,7 +62,7 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
         self_build_mode=os.getenv("SELF_BUILD_MODE", "true").lower() == "true",
 
         # Brain
-        vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/chroma"),
+        vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/lancedb"),
         core_brain_path=os.getenv("CORE_BRAIN_PATH", "./data/core_brain"),
         digital_clone_brain_path=os.getenv("DIGITAL_CLONE_BRAIN_PATH", "./data/digital_clone_brain"),
         memory_path=os.getenv("MEMORY_PATH", "./data/memory"),

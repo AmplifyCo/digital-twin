@@ -1,20 +1,42 @@
-"""ChromaDB vector database wrapper."""
+"""LanceDB vector database wrapper — ACID-compliant, crash-safe replacement for ChromaDB.
+
+Uses sentence-transformers for embeddings (same all-MiniLM-L6-v2 model as before).
+LanceDB stores data in the Lance columnar format — no SQLite, no WAL corruption.
+"""
 
 import asyncio
-import shutil
-import chromadb
-from chromadb.config import Settings
-from chromadb.errors import InternalError
+import json
 import logging
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+import lancedb
+import pyarrow as pa
+from sentence_transformers import SentenceTransformer
+
 logger = logging.getLogger(__name__)
+
+# Shared embedding model (loaded once, reused across all instances)
+_embedding_model: Optional[SentenceTransformer] = None
+
+
+def _get_embedding_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
+    """Lazy-load and cache the embedding model."""
+    global _embedding_model
+    if _embedding_model is None:
+        logger.info(f"Loading embedding model: {model_name}")
+        _embedding_model = SentenceTransformer(model_name)
+        logger.info(f"Embedding model loaded (dim={_embedding_model.get_sentence_embedding_dimension()})")
+    return _embedding_model
 
 
 class VectorDatabase:
-    """Wrapper for ChromaDB to store and retrieve semantic memories."""
+    """Wrapper for LanceDB to store and retrieve semantic memories.
+
+    Drop-in replacement for the old ChromaDB wrapper — same interface,
+    but ACID-compliant and crash-safe (no SQLite corruption issues).
+    """
 
     def __init__(
         self,
@@ -25,75 +47,50 @@ class VectorDatabase:
         """Initialize vector database.
 
         Args:
-            path: Path to store ChromaDB data
-            collection_name: Name of the collection
+            path: Path to store LanceDB data
+            collection_name: Name of the table (was 'collection' in ChromaDB)
             embedding_model: Sentence transformer model for embeddings
         """
         self.path = path
         self.collection_name = collection_name
-        self.embedding_model = embedding_model
+        self.embedding_model_name = embedding_model
 
-        self._init_client(path, collection_name, embedding_model)
-        logger.info(f"Initialized vector DB at {path}, collection: {collection_name}")
+        # Ensure directory exists
+        Path(path).mkdir(parents=True, exist_ok=True)
 
-    def _init_client(self, path: str, collection_name: str, embedding_model: str):
-        """Initialize ChromaDB client, auto-recovering from corruption if needed."""
+        # Connect to LanceDB
+        self.db = lancedb.connect(path)
+        self.model = _get_embedding_model(embedding_model)
+        self._dim = self.model.get_sentence_embedding_dimension()
+
+        # Open or create table
+        self.table = self._get_or_create_table()
+
+        # Backward compat: expose a .collection attribute for code that uses it
+        self.collection = self
+
+        logger.info(f"Initialized LanceDB at {path}, table: {collection_name}")
+
+    def _get_or_create_table(self):
+        """Get existing table or create a new empty one."""
         try:
-            # Explicitly create directory (parents=True) to avoid FileNotFoundError
-            Path(path).mkdir(parents=True, exist_ok=True)
-            
-            self.client = chromadb.PersistentClient(
-                path=path,
-                settings=Settings(anonymized_telemetry=False)
-            )
-            self._enable_wal_mode(path)
-            self.collection = self.client.get_or_create_collection(
-                name=collection_name,
-                metadata={"embedding_model": embedding_model}
-            )
-        except (InternalError, Exception) as e:
-            err_msg = str(e).lower()
-            if any(kw in err_msg for kw in ["compaction", "purging", "corrupt", "disk i/o", "code: 522"]):
-                logger.warning(f"ChromaDB corrupted at {path}, auto-recovering: {e}")
-                self._wipe_and_reinit(path, collection_name, embedding_model)
-            else:
-                raise
+            if self.collection_name in self.db.table_names():
+                return self.db.open_table(self.collection_name)
+        except Exception as e:
+            logger.warning(f"Error opening table {self.collection_name}: {e}")
 
-    def _wipe_and_reinit(self, path: str, collection_name: str, embedding_model: str):
-        """Delete corrupted ChromaDB data and reinitialize fresh."""
-        db_path = Path(path)
-        if db_path.exists():
-            shutil.rmtree(db_path)
-            logger.info(f"Wiped corrupted ChromaDB at {path}")
-        db_path.mkdir(parents=True, exist_ok=True)
-        self.client = chromadb.PersistentClient(
-            path=path,
-            settings=Settings(anonymized_telemetry=False)
-        )
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"embedding_model": embedding_model}
-        )
-        logger.info(f"Reinitialized fresh ChromaDB at {path}")
+        # Create empty table with schema
+        schema = pa.schema([
+            pa.field("id", pa.string()),
+            pa.field("text", pa.string()),
+            pa.field("metadata", pa.string()),  # JSON-encoded metadata
+            pa.field("vector", pa.list_(pa.float32(), self._dim)),
+        ])
+        return self.db.create_table(self.collection_name, schema=schema)
 
-    @staticmethod
-    def _enable_wal_mode(path: str):
-        """Enable WAL journal mode on ChromaDB's underlying SQLite.
-
-        WAL mode allows concurrent reads while writing, improving performance
-        when multiple components (scheduler, learning, conversation) hit the DB.
-        """
-        import sqlite3
-        from pathlib import Path
-        db_path = Path(path) / "chroma.sqlite3"
-        if db_path.exists():
-            try:
-                conn = sqlite3.connect(str(db_path))
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.close()
-                logger.debug(f"WAL mode enabled for {db_path}")
-            except Exception as e:
-                logger.debug(f"Could not enable WAL mode: {e}")
+    def _embed(self, text: str) -> List[float]:
+        """Generate embedding vector for text."""
+        return self.model.encode(text).tolist()
 
     async def store(
         self,
@@ -114,34 +111,36 @@ class VectorDatabase:
         if not doc_id:
             doc_id = str(uuid.uuid4())
 
+        vector = self._embed(text)
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+
+        record = {
+            "id": doc_id,
+            "text": text,
+            "metadata": meta_json,
+            "vector": vector,
+        }
+
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None,
-                lambda: self.collection.add(
-                    documents=[text],
-                    metadatas=[metadata or {}],
-                    ids=[doc_id]
-                )
-            )
+            # Check if doc_id already exists (for upsert behavior)
+            await loop.run_in_executor(None, lambda: self._upsert(record, doc_id))
         except Exception as e:
-            err_msg = str(e).lower()
-            if any(kw in err_msg for kw in ["disk i/o", "code: 522", "corrupt", "compaction", "purging"]):
-                logger.warning(f"ChromaDB write failed ({e}), recovering and retrying...")
-                self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
-                await loop.run_in_executor(
-                    None,
-                    lambda: self.collection.add(
-                        documents=[text],
-                        metadatas=[metadata or {}],
-                        ids=[doc_id]
-                    )
-                )
-            else:
-                raise
+            logger.error(f"LanceDB store failed: {e}")
+            raise
 
         logger.debug(f"Stored document {doc_id}")
         return doc_id
+
+    def _upsert(self, record: dict, doc_id: str):
+        """Insert or update a record."""
+        try:
+            # Try to delete existing record with same ID first
+            self.table.delete(f"id = '{doc_id}'")
+        except Exception:
+            pass  # Table might be empty or ID doesn't exist
+
+        self.table.add([record])
 
     async def search(
         self,
@@ -154,66 +153,73 @@ class VectorDatabase:
         Args:
             query: Search query
             n_results: Number of results to return
-            filter_metadata: Optional metadata filter
+            filter_metadata: Optional metadata filter (not used with LanceDB simple mode)
 
         Returns:
             List of matching documents with metadata and distances
         """
         loop = asyncio.get_event_loop()
         try:
+            query_vector = self._embed(query)
             results = await loop.run_in_executor(
                 None,
-                lambda: self.collection.query(
-                    query_texts=[query],
-                    n_results=n_results,
-                    where=filter_metadata
-                )
+                lambda: self.table.search(query_vector).limit(n_results).to_list()
             )
         except Exception as e:
-            err_msg = str(e).lower()
-            if any(kw in err_msg for kw in ["disk i/o", "code: 522", "corrupt", "compaction", "purging"]):
-                logger.warning(f"ChromaDB read failed ({e}), recovering...")
-                self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
-                # After recovery, collection is empty — return empty results
-                return []
-            else:
-                raise
+            logger.warning(f"LanceDB search failed: {e}")
+            return []
 
-        # Format results
+        # Format results to match old ChromaDB interface
         matches = []
-        if results['documents'] and results['documents'][0]:
-            for idx, doc in enumerate(results['documents'][0]):
-                matches.append({
-                    "text": doc,
-                    "metadata": results['metadatas'][0][idx] if results['metadatas'] else {},
-                    "distance": results['distances'][0][idx] if results['distances'] else 0.0,
-                    "id": results['ids'][0][idx] if results['ids'] else None
-                })
+        for row in results:
+            try:
+                meta = json.loads(row.get("metadata", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+
+            matches.append({
+                "text": row.get("text", ""),
+                "metadata": meta,
+                "distance": row.get("_distance", 0.0),
+                "id": row.get("id", None)
+            })
 
         logger.debug(f"Found {len(matches)} matches for query")
         return matches
 
     def count(self) -> int:
-        """Get total number of documents in collection.
+        """Get total number of documents in table.
 
         Returns:
             Document count
         """
-        return self.collection.count()
+        try:
+            return self.table.count_rows()
+        except Exception:
+            return 0
 
-    def delete(self, doc_id: str):
-        """Delete a document by ID.
+    def delete(self, doc_id: str = None, ids: List[str] = None):
+        """Delete document(s) by ID.
 
         Args:
-            doc_id: Document ID to delete
+            doc_id: Single document ID to delete
+            ids: List of document IDs to delete (for backward compat with ChromaDB)
         """
-        self.collection.delete(ids=[doc_id])
-        logger.debug(f"Deleted document {doc_id}")
+        try:
+            if ids:
+                for did in ids:
+                    self.table.delete(f"id = '{did}'")
+            elif doc_id:
+                self.table.delete(f"id = '{doc_id}'")
+            logger.debug(f"Deleted document(s)")
+        except Exception as e:
+            logger.warning(f"LanceDB delete failed: {e}")
 
     def clear(self):
-        """Clear all documents from collection."""
-        self.client.delete_collection(self.collection_name)
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name
-        )
-        logger.info(f"Cleared collection {self.collection_name}")
+        """Clear all documents from table."""
+        try:
+            self.db.drop_table(self.collection_name)
+        except Exception:
+            pass
+        self.table = self._get_or_create_table()
+        logger.info(f"Cleared table {self.collection_name}")
