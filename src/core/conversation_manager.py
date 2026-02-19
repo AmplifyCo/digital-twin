@@ -519,14 +519,13 @@ class ConversationManager:
             model_tier = self._get_model_tier(message)
             logger.info(f"Action [{model_tier}] - using agent with tools (inferred: {inferred_task or 'direct'})")
             
-            # Use inferred task if available (it might be more specific), otherwise original message
-            task_to_run = inferred_task if inferred_task else message
-            
             # Build context-aware system prompt
             system_prompt = await self._build_system_prompt(intent)
             
+            # Use agent_task (enriched with conversation history + memory)
+            # NOT raw message — otherwise agent loses multi-turn context
             response = await self.agent.run(
-                task=task_to_run,
+                task=agent_task,
                 system_prompt=system_prompt,
                 pii_map=pii_map,
                 model_tier=model_tier
@@ -541,10 +540,9 @@ class ConversationManager:
             # Simple conversation
             system_prompt = await self._build_system_prompt(intent)
             
-            # Use agent just for the chat generation (no tools)
-            # We pass pii_map even for chat, though usually less critical unless it echoes back
+            # Use agent_task (enriched with history) so agent has multi-turn context
             response = await self.agent.run(
-                task=message,
+                task=agent_task,
                 max_iterations=3,
                 system_prompt=system_prompt,
                 pii_map=pii_map
