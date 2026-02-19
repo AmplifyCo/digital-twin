@@ -1009,12 +1009,29 @@ Examples:
 "How does photosynthesis work?" → question|high|none|none
 "Do the thing" (no context) → clarify|low|What would you like me to do?|none"""
 
-            response = await intent_client.create_message(
-                model=intent_model,
-                max_tokens=120,
-                system=intent_prompt,
-                messages=[{"role": "user", "content": message}]
-            )
+            # Try primary intent client
+            try:
+                response = await intent_client.create_message(
+                    model=intent_model,
+                    max_tokens=120,
+                    system=intent_prompt,
+                    messages=[{"role": "user", "content": message}]
+                )
+            except Exception as e:
+                # If primary was Gemini and failed (e.g. missing litellm), fall back to Anthropic
+                if intent_provider == "gemini" and self.anthropic_client:
+                    logger.warning(f"Gemini intent parsing failed ({e}), falling back to Claude...")
+                    intent_client = self.anthropic_client
+                    intent_model = "claude-3-haiku-20240307"  # Hardcode fallback model
+                    
+                    response = await intent_client.create_message(
+                        model=intent_model,
+                        max_tokens=120,
+                        system=intent_prompt,
+                        messages=[{"role": "user", "content": message}]
+                    )
+                else:
+                    raise e  # Re-raise if no fallback possible
 
             raw_response = response.content[0].text.strip()
             logger.debug(f"LLM raw intent response: {raw_response}")
@@ -1075,7 +1092,7 @@ Examples:
             return {"action": "conversation", "confidence": 0.5, "parameters": {}}
 
         except Exception as e:
-            logger.debug(f"LLM intent parsing error: {e}")
+            logger.error(f"Intent parsing failed completely: {e}")
             return {"action": "unknown", "confidence": 0.3, "parameters": {}}
 
     async def _build_execution_plan(self, intent: Dict[str, Any], message: str) -> str:
