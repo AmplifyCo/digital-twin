@@ -52,7 +52,8 @@ class VectorDatabase:
                 metadata={"embedding_model": embedding_model}
             )
         except (InternalError, Exception) as e:
-            if "compaction" in str(e).lower() or "purging" in str(e).lower() or "corrupt" in str(e).lower():
+            err_msg = str(e).lower()
+            if any(kw in err_msg for kw in ["compaction", "purging", "corrupt", "disk i/o", "code: 522"]):
                 logger.warning(f"ChromaDB corrupted at {path}, auto-recovering: {e}")
                 self._wipe_and_reinit(path, collection_name, embedding_model)
             else:
@@ -123,17 +124,21 @@ class VectorDatabase:
                     ids=[doc_id]
                 )
             )
-        except InternalError as e:
-            logger.warning(f"ChromaDB write failed ({e}), recovering and retrying...")
-            self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
-            await loop.run_in_executor(
-                None,
-                lambda: self.collection.add(
-                    documents=[text],
-                    metadatas=[metadata or {}],
-                    ids=[doc_id]
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(kw in err_msg for kw in ["disk i/o", "code: 522", "corrupt", "compaction", "purging"]):
+                logger.warning(f"ChromaDB write failed ({e}), recovering and retrying...")
+                self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.collection.add(
+                        documents=[text],
+                        metadatas=[metadata or {}],
+                        ids=[doc_id]
+                    )
                 )
-            )
+            else:
+                raise
 
         logger.debug(f"Stored document {doc_id}")
         return doc_id
@@ -155,14 +160,24 @@ class VectorDatabase:
             List of matching documents with metadata and distances
         """
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: self.collection.query(
-                query_texts=[query],
-                n_results=n_results,
-                where=filter_metadata
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda: self.collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                    where=filter_metadata
+                )
             )
-        )
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(kw in err_msg for kw in ["disk i/o", "code: 522", "corrupt", "compaction", "purging"]):
+                logger.warning(f"ChromaDB read failed ({e}), recovering...")
+                self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
+                # After recovery, collection is empty — return empty results
+                return []
+            else:
+                raise
 
         # Format results
         matches = []
