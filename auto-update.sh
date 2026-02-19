@@ -74,14 +74,13 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     log "✅ Updates pulled successfully"
 
     # Update dependencies if requirements.txt changed
-    if git diff --name-only "$LOCAL" "$REMOTE" | grep -q "requirements.txt"; then
-        log "📦 requirements.txt changed, updating dependencies..."
-        # Use venv pip if available, else fall back to system pip
-        if [ -f "$SCRIPT_DIR/venv/bin/pip" ]; then
-            "$SCRIPT_DIR/venv/bin/pip" install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
-        else
-            python3 -m pip install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
-        fi
+    # Always check/install dependencies to ensure environment is correct
+    log "📦 Checking/Installing dependencies..."
+    # Use venv pip if available, else fall back to system pip
+    if [ -f "$SCRIPT_DIR/venv/bin/pip" ]; then
+        "$SCRIPT_DIR/venv/bin/pip" install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
+    else
+        python3 -m pip install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
     fi
 
     # Refresh global dt-setup if it changed and is installed globally
