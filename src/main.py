@@ -299,7 +299,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 api_token=config.whatsapp_api_token,
                 phone_id=config.whatsapp_phone_id,
                 verify_token=config.whatsapp_verify_token,
-                conversation_manager=conversation_manager
+                conversation_manager=conversation_manager,
+                allowed_numbers=config.whatsapp_allowed_numbers
             )
 
             # Register chat handler with dashboard

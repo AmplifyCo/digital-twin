@@ -81,6 +81,7 @@ class AgentConfig:
     whatsapp_api_token: Optional[str] = None
     whatsapp_phone_id: Optional[str] = None
     whatsapp_verify_token: Optional[str] = None
+    whatsapp_allowed_numbers: List[str] = field(default_factory=list)
 
     dashboard_enabled: bool = True
     dashboard_host: str = "0.0.0.0"

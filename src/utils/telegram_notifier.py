@@ -66,7 +66,16 @@ class TelegramNotifier:
             logger.debug(f"Sent Telegram notification: {level}")
 
         except Exception as e:
-            logger.error(f"Failed to send Telegram notification: {e}")
+            logger.warning(f"Failed to send Telegram notification (Markdown): {e}")
+            try:
+                # Fallback to plain text
+                await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=formatted_message,
+                    parse_mode=None
+                )
+            except Exception as e2:
+                logger.error(f"Failed to send Telegram notification (Plain Text): {e2}")
 
     async def send_progress(
         self,
