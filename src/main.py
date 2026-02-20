@@ -370,7 +370,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             check_interval=3600,  # 1 hour
             log_file=str(LOG_DIR / "agent.log"),
             auto_fix_enabled=True,
-            llm_client=gemini_client  # Enable AI-powered fixes
+            llm_client=gemini_client,  # Enable AI-powered fixes
+            tool_registry=agent.tools  # Enable capability gap fixing
         )
         self_healing_task = asyncio.create_task(self_healing.start())
 
