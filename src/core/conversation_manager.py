@@ -142,6 +142,9 @@ class ConversationManager:
         self._circuit_breaker_window = 300  # 5 minute window
         self._circuit_breaker_cooldown = 120  # skip Claude for 2 min after tripping
 
+        # Public reference to the AutonomousAgent for async background delegation
+        self.agent = agent
+
         # Context Thalamus: token budgeting and history management
         from src.core.context_thalamus import ContextThalamus
         self.thalamus = ContextThalamus()

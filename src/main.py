@@ -214,6 +214,15 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 logger.info(f"📞 TwilioCallTool registered (ElevenLabs + Google Journey fallback)")
             else:
                 logger.info(f"📞 TwilioCallTool registered (Google Journey voice)")
+                
+            # Register WhatsApp Outbound Tool explicitly for background task reporting
+            from src.core.tools.whatsapp_outbound import WhatsAppOutboundTool
+            whatsapp_outbound_tool = WhatsAppOutboundTool(
+                account_sid=config.twilio_account_sid,
+                auth_token=config.twilio_auth_token,
+                from_number=config.twilio_whatsapp_number
+            )
+            agent.tools.register(whatsapp_outbound_tool)
 
         # Register ContactsTool (persistent contacts in DigitalCloneBrain)
         from src.core.tools.contacts import ContactsTool

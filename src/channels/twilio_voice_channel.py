@@ -186,6 +186,39 @@ class TwilioVoiceChannel:
             # A simple heuristic: if the AI says goodbye or similar, we might want to hang up.
             is_goodbye = any(phrase in ai_response.lower() for phrase in ["goodbye", "have a great day", "bye for now"])
             
+            if is_goodbye:
+                # The call consists of this outbound API session closing.
+                # Kick off an asynchronous background task to summarize what happened 
+                # and WhatsApp the Principal.
+                logger.info("Call ending identified. Pushing background WhatsApp reporting task.")
+                
+                # Fetch recent memory for the call context
+                history = self.conversation_manager._get_recent_history_for_intent(user_id=user_number, limit=6)
+                
+                reporting_task = (
+                    f"You just finished a phone call with {user_number}. "
+                    f"Here is the transcript of the call:\n\n{history}\n\n"
+                    "Please execute the 'send_whatsapp_message' tool to send a WhatsApp message to Srinath (Principal) "
+                    "summarizing the outcome of this call. Be concise but include any relevant details like times, confirmations, or failures."
+                )
+                
+                # To prevent blocking the Twilio Webhook (which needs to return TwiML), we run the agent task asynchronously.
+                import asyncio
+                async def run_reporting_task():
+                    try:
+                        # Sleep briefly to ensure the call officially disconnects first
+                        await asyncio.sleep(5)
+                        # We use the autonomous agent directly if available
+                        agent = getattr(self.conversation_manager, 'agent', None)
+                        if agent:
+                            await agent.run(task=reporting_task)
+                        else:
+                            logger.error("Could not find AutonomousAgent to execute background task.")
+                    except Exception as loop_e:
+                        logger.error(f"Background reporting task failed: {loop_e}", exc_info=True)
+                
+                asyncio.create_task(run_reporting_task())
+            
             # Return the AI's response and prompt for more input (unless it's a goodbye)
             return await self._generate_twiml(text=ai_response, prompt_for_input=not is_goodbye)
             
