@@ -40,8 +40,7 @@ class ContactsTool(BaseTool):
     parameters = {
         "operation": {
             "type": "string",
-            "description": "Operation: 'save_contact', 'search_contacts', 'list_contacts', 'delete_contact'",
-            "enum": ["save_contact", "search_contacts", "list_contacts", "delete_contact"]
+            "description": "Operation to perform. Must be one of: save_contact, search_contacts, list_contacts, delete_contact"
         },
         "name": {
             "type": "string",

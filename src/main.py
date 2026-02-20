@@ -387,6 +387,9 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                     twilio_call_tool=twilio_call_tool if 'twilio_call_tool' in locals() else None,
                     allowed_numbers=config.whatsapp_allowed_numbers
                 )
+                # Wire voice channel to call tool for mission registration
+                if 'twilio_call_tool' in locals():
+                    twilio_call_tool.voice_channel = twilio_voice_channel
                 # Register with dashboard
                 if dashboard.enabled:
                     dashboard.set_twilio_voice_chat(twilio_voice_channel)

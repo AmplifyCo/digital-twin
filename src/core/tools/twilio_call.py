@@ -33,7 +33,9 @@ class TwilioCallTool(BaseTool):
         "Make an outbound phone call to deliver a spoken message. "
         "Use this when the user asks you to call someone, phone someone, "
         "or deliver an urgent voice message. The recipient will hear "
-        "the message spoken in a natural human-like voice."
+        "the message spoken in a natural human-like voice. "
+        "For task-oriented calls (e.g. making a reservation), set the 'mission' "
+        "parameter so Nova knows the goal and can have a full conversation."
     )
 
     parameters = {
@@ -43,7 +45,11 @@ class TwilioCallTool(BaseTool):
         },
         "message": {
             "type": "string",
-            "description": "The message to speak to the recipient"
+            "description": "The initial message to speak when the call connects"
+        },
+        "mission": {
+            "type": "string",
+            "description": "Optional goal for task-oriented calls (e.g. 'Reserve a table for 2 at 7:30 PM tonight. Negotiate for 7:00 or 8:00 if unavailable. Party name: Srinath.'). When set, Nova will have a full back-and-forth conversation to achieve this goal."
         },
         "voice": {
             "type": "string",
@@ -73,6 +79,7 @@ class TwilioCallTool(BaseTool):
         from_number: str,
         elevenlabs_api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        voice_channel=None,
     ):
         """Initialize the Twilio Call tool.
 
@@ -82,12 +89,14 @@ class TwilioCallTool(BaseTool):
             from_number: Twilio phone number (e.g., '+14155551234')
             elevenlabs_api_key: Optional ElevenLabs API key for premium voices
             base_url: Public base URL for serving audio (e.g., 'https://example.com')
+            voice_channel: Optional TwilioVoiceChannel for mission registration
         """
         self.account_sid = account_sid
         self.auth_token = auth_token
         self.from_number = from_number
         self.elevenlabs_api_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
         self.base_url = base_url
+        self.voice_channel = voice_channel
 
         self.enabled = bool(account_sid and auth_token and from_number)
         self.elevenlabs_enabled = bool(self.elevenlabs_api_key)
@@ -213,6 +222,7 @@ class TwilioCallTool(BaseTool):
 
         to_number = kwargs.get("to_number")
         message = kwargs.get("message")
+        mission = kwargs.get("mission")
         voice_key = kwargs.get("voice", "female").lower()
 
         if not to_number or not message:
@@ -254,10 +264,24 @@ class TwilioCallTool(BaseTool):
 
             logger.info(f"📞 Call initiated: SID={call.sid}, status={call.status}")
 
+            # Register mission with voice channel for two-way conversation
+            if mission and self.voice_channel:
+                self.voice_channel.register_call_mission(
+                    call_sid=call.sid,
+                    mission=mission,
+                )
+                logger.info(f"📋 Mission registered for call {call.sid}")
+
+            result_msg = f"Call initiated to {to_number} (SID: {call.sid}, voice: {voice_used})."
+            if mission:
+                result_msg += f" Mission registered — Nova will have a full conversation to achieve: {mission}"
+            else:
+                result_msg += " The recipient will be able to reply via subsequent voice messages."
+
             return ToolResult(
-                output=f"Call initiated to {to_number} (SID: {call.sid}, voice: {voice_used}). The recipient will be able to reply which you can handle via subsequent voice messages.",
+                output=result_msg,
                 success=True,
-                data={"call_sid": call.sid, "status": call.status, "voice": voice_used}
+                data={"call_sid": call.sid, "status": call.status, "voice": voice_used, "has_mission": bool(mission)}
             )
 
         except Exception as e:

@@ -1256,6 +1256,10 @@ Examples:
 "What's on my calendar?" → action|high|Check calendar for upcoming events|calendar_list
 "Schedule a call with Sarah tomorrow at 2pm" → action|high|Create calendar event: call with Sarah tomorrow 2pm|calendar_create
 "Remind me to call John at 3pm" → action|high|Set reminder: call John at 3pm|reminder_set
+"Call Pallavi" → action|high|Look up Pallavi's phone number in contacts and call her|contacts,make_phone_call
+"Call Mom and ask about dinner" → action|high|Look up Mom's number in contacts and call her to ask about dinner|contacts,make_phone_call
+"Text John hello" → action|high|Look up John's number in contacts and send WhatsApp message|contacts,send_whatsapp_message
+"Do you have Pallavi's number?" → action|high|Search contacts for Pallavi's phone number|contacts
 "Search for flights to NYC" → action|high|Search flights to NYC|web_search
 "yes" (after bot proposed deleting emails) → action|high|Delete the emails as proposed|email_delete
 "do it" / "go ahead" / "confirm" → action|high|Execute the proposed action|none
@@ -1391,9 +1395,36 @@ Examples:
         else:
             task = f"{context_prefix}User request: {message}"
 
-        # Inject validated tool routing hints
+        # Inject validated tool routing hints (non-restrictive — agent may use others)
         if tool_hints:
-            task += f"\n\nUse these tools: {', '.join(tool_hints)}"
+            task += f"\n\nSuggested tools: {', '.join(tool_hints)}"
+
+        # Pre-resolve contacts for communication tasks
+        # This ensures the agent has phone numbers/emails without extra tool calls
+        _COMM_TOOLS = {"make_phone_call", "send_whatsapp_message", "email_send", "email"}
+        needs_contacts = (
+            tool_hints and set(tool_hints) & _COMM_TOOLS
+        ) or any(kw in message.lower() for kw in ("call ", "phone", "text ", "whatsapp", "message ", "email ", "contact", "number"))
+        if needs_contacts:
+            try:
+                contacts_tool = self.agent.tools.get_tool("contacts")
+                if contacts_tool and contacts_tool._contacts:
+                    contact_lines = []
+                    for contact in contacts_tool._contacts.values():
+                        line = f"• {contact.get('name', 'Unknown')}"
+                        rel = contact.get("relationship", "")
+                        if rel and rel != "unknown":
+                            line += f" ({rel})"
+                        if contact.get("phone"):
+                            line += f" — Phone: +{contact['phone']}"
+                        if contact.get("email"):
+                            line += f" — Email: {contact['email']}"
+                        contact_lines.append(line)
+                    if contact_lines:
+                        task += f"\n\nSAVED CONTACTS:\n" + "\n".join(contact_lines)
+                        task += "\n(Use these numbers/emails directly — do NOT ask the user for them.)"
+            except Exception as e:
+                logger.debug(f"Contact pre-resolution skipped: {e}")
 
         # Enrich with relevant memory (contacts, preferences, past context)
         if self.brain and hasattr(self.brain, 'get_relevant_context'):
@@ -1641,11 +1672,15 @@ AUTONOMY & REASONING (CRITICAL):
 - Only ask the user for help if you have exhausted all relevant tools and the information simply does not exist.
 
 VOICE & CALL INTELLIGENCE:
-- When making phone calls, do not just deliver a task message and hang up. 
+- When making phone calls, do not just deliver a task message and hang up.
 - Act autonomously and be self-directed to hold a meaningful, intelligent conversation with the recipient to accomplish the broad goal.
 - Listen and adapt to the recipient's responses.
 - NEVER guess a phone number. NEVER use the user's own phone number (from message metadata or chat history) as the target for someone else.
 - If asked to call someone, you MUST lookup their number in the contacts tool. If it's missing, you MUST ask the user for the number.
+- For task-oriented calls (reservations, appointments, inquiries), use the 'mission' parameter on make_phone_call. This lets Nova have a full autonomous conversation to achieve the goal.
+- When you see [ACTIVE CALL MISSION], you ARE the caller. Stay focused on the mission goal. Be polite but purposeful. Negotiate alternatives if needed. When your goal is achieved or clearly impossible, politely say goodbye.
+- For calls like restaurant reservations: greet, state request, negotiate if first choice unavailable, confirm details (time, party size, name), then say goodbye.
+- If a call-based mission fails (no availability, wrong number, etc.), report the failure clearly when you WhatsApp back, and suggest alternatives if appropriate.
 
 PRIVACY & DISCRETION (CRITICAL):
 - NEVER reveal who your principal is meeting with, what they're working on, or personal details.
