@@ -88,19 +88,38 @@ class GeminiClient:
         
         Fixes issues where LiteLLM expects a dict but gets a string, or chokes on 'anyOf'.
         """
+        # If the schema is literally just a string like "string" or "object"
+        # instead of {"type": "string"}, wrap it in a dict so litellm's .get() works.
+        if isinstance(schema, str):
+            return {"type": schema}
+            
         if isinstance(schema, list):
             return [self._sanitize_schema(item) for item in schema]
+            
         elif isinstance(schema, dict):
             # LiteLLM vertex parser crashes on 'anyOf' if it's not perfectly formed,
             # or if it hits a string where it expects a dict with .get()
             sanitized = {}
             for k, v in schema.items():
-                if k == "anyOf":
-                    # Strip anyOf entirely to be safe, Gemini often doesn't need it
-                    # or it causes Vertex parse crashes.
+                if k == "anyOf" or k == "allOf" or k == "oneOf":
+                    # Strip union schemas entirely to be safe, Gemini doesn't need them
+                    # and they cause Vertex parse crashes.
                     continue
-                sanitized[k] = self._sanitize_schema(v)
+                    
+                # If a property definition is just a string, wrap it.
+                if k == "properties" and isinstance(v, dict):
+                    prop_dict = {}
+                    for pk, pv in v.items():
+                        if isinstance(pv, str):
+                            prop_dict[pk] = {"type": pv}
+                        else:
+                            prop_dict[pk] = self._sanitize_schema(pv)
+                    sanitized[k] = prop_dict
+                else:
+                    sanitized[k] = self._sanitize_schema(v)
+                    
             return sanitized
+            
         return schema
 
     def _convert_tools_for_litellm(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
