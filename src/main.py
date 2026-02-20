@@ -21,7 +21,7 @@ from src.core.conversation_manager import ConversationManager
 from src.integrations.anthropic_client import AnthropicClient
 from src.integrations.model_router import ModelRouter
 from src.channels.telegram_channel import TelegramChannel
-from src.channels.whatsapp_channel import WhatsAppChannel
+from src.channels.twilio_whatsapp_channel import TwilioWhatsAppChannel
 from src.channels.twilio_voice_channel import TwilioVoiceChannel
 from src.utils.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from src.utils.dashboard import Dashboard
@@ -166,15 +166,16 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         agent.digital_brain = digital_brain   # Conversation memories, preferences, contacts
         agent.core_brain = core_brain         # Intelligence principles, build knowledge, patterns
 
-        # Register WhatsAppTool (outbound) - Meta Cloud API
-        if config.whatsapp_api_token and config.whatsapp_phone_id:
-            from src.core.tools.whatsapp import WhatsAppTool
-            whatsapp_tool = WhatsAppTool(
-                api_token=config.whatsapp_api_token,
-                phone_id=config.whatsapp_phone_id
+        # Register TwilioWhatsAppTool (outbound)
+        if config.twilio_account_sid and config.twilio_auth_token and config.twilio_whatsapp_number:
+            from src.core.tools.twilio_whatsapp import TwilioWhatsAppTool
+            twilio_whatsapp_tool = TwilioWhatsAppTool(
+                account_sid=config.twilio_account_sid,
+                auth_token=config.twilio_auth_token,
+                from_number=config.twilio_whatsapp_number
             )
-            agent.tools.register(whatsapp_tool)
-            logger.info("📱 WhatsAppTool registered (Meta Cloud API)")
+            agent.tools.register(twilio_whatsapp_tool)
+            logger.info("📱 TwilioWhatsAppTool registered")
 
         # Register ContactsTool (persistent contacts in DigitalCloneBrain)
         from src.core.tools.contacts import ContactsTool
@@ -312,20 +313,20 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 webhook_url=webhook_url
             )
 
-            # Initialize WhatsApp Channel (Meta API)
-            whatsapp_channel = None
-            if config.whatsapp_api_token and config.whatsapp_phone_id:
-                logger.info("Initializing WhatsApp channel (Meta)...")
-                whatsapp_channel = WhatsAppChannel(
-                    api_token=config.whatsapp_api_token,
-                    phone_id=config.whatsapp_phone_id,
-                    verify_token=config.whatsapp_verify_token,
+            # Initialize Twilio WhatsApp Channel
+            twilio_whatsapp_channel = None
+            if config.twilio_account_sid and config.twilio_auth_token and config.twilio_whatsapp_number:
+                logger.info("Initializing Twilio WhatsApp channel...")
+                twilio_whatsapp_channel = TwilioWhatsAppChannel(
+                    account_sid=config.twilio_account_sid,
+                    auth_token=config.twilio_auth_token,
+                    whatsapp_number=config.twilio_whatsapp_number,
                     conversation_manager=conversation_manager,
-                    allowed_numbers=config.whatsapp_allowed_numbers
+                    allowed_numbers=None # TODO: Map from config if needed
                 )
                 # Register with dashboard
                 if dashboard.enabled:
-                    dashboard.set_whatsapp_chat(whatsapp_channel)
+                    dashboard.set_twilio_whatsapp_chat(twilio_whatsapp_channel)
 
             # Initialize Twilio Voice Channel
             twilio_voice_channel = None
@@ -346,8 +347,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 dashboard.set_telegram_chat(telegram_chat)
 
             logger.info("💬 Telegram chat interface initialized (channel-agnostic architecture)")
-            if whatsapp_channel and whatsapp_channel.enabled:
-                logger.info("💬 WhatsApp chat interface initialized")
+            if twilio_whatsapp_channel and twilio_whatsapp_channel.enabled:
+                logger.info("💬 Twilio WhatsApp chat interface initialized")
             if twilio_voice_channel and twilio_voice_channel.enabled:
                 logger.info("📞 Twilio Voice interface initialized")
 

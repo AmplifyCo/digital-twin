@@ -83,13 +83,14 @@ class Dashboard:
         self.telegram_chat = telegram_chat
         logger.info("Telegram chat handler registered with dashboard")
 
-    def set_whatsapp_chat(self, whatsapp_chat):
-        """Set WhatsApp chat handler for webhook endpoint.
+    def set_twilio_whatsapp_chat(self, twilio_whatsapp_chat):
+        """Set Twilio WhatsApp chat handler for webhook endpoint.
 
         Args:
-            whatsapp_chat: WhatsAppChannel instance
+            twilio_whatsapp_chat: TwilioWhatsAppChannel instance
         """
-        self.whatsapp_chat = whatsapp_chat
+        self.twilio_whatsapp_chat = twilio_whatsapp_chat
+        logger.info("Twilio WhatsApp chat handler registered with dashboard")
 
     def set_twilio_voice_chat(self, twilio_voice_chat):
         """Set Twilio Voice chat handler for webhook endpoint.
@@ -149,47 +150,16 @@ class Dashboard:
                 logger.error(f"Error in Telegram webhook: {e}", exc_info=True)
                 return {"ok": False, "error": str(e)}
 
-        @app.get("/whatsapp/webhook")
-        async def verify_whatsapp_webhook(request: Request):
-            """Handle WhatsApp webhook verification (GET)."""
-            if not hasattr(self, 'whatsapp_chat') or not self.whatsapp_chat:
-                logger.warning("WhatsApp verify called but chat handler not set")
-                return self.JSONResponse(status_code=403, content={"status": "error", "error": "Not configured"})
-
-            try:
-                # Get query params
-                params = dict(request.query_params)
-                challenge = await self.whatsapp_chat.verify_webhook(params)
+        @app.post("/twilio/whatsapp")
+        async def twilio_whatsapp_webhook(request: Request):
+            """Handle incoming Twilio WhatsApp message (POST)."""
+            if not getattr(self, "twilio_whatsapp_chat", None):
+                return Response("Online", media_type="text/xml")
                 
-                if challenge:
-                    return self.HTMLResponse(content=challenge, status_code=200)
-                else:
-                    return self.JSONResponse(status_code=403, content={"status": "error", "error": "Verification failed"})
-
-            except Exception as e:
-                logger.error(f"Error in WhatsApp verification: {e}", exc_info=True)
-                return self.JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
-
-        @app.post("/whatsapp/webhook")
-        async def whatsapp_webhook(request: Request):
-            """Handle WhatsApp webhook (POST)."""
-            if not hasattr(self, 'whatsapp_chat') or not self.whatsapp_chat:
-                logger.warning("WhatsApp webhook called but chat handler not set")
-                return {"status": "error", "error": "Chat handler not configured"}
-
-            try:
-                # Get JSON payload (Meta sends JSON)
-                payload = await request.json()
-                logger.debug(f"Received WhatsApp webhook: {payload}")
-
-                if self.whatsapp_chat:
-                    result = await self.whatsapp_chat.handle_webhook_payload(payload)
-                    return Response(content=json.dumps(result), media_type="application/json")
-                return Response("OK", status_code=200)
-
-            except Exception as e:
-                logger.error(f"Error in WhatsApp webhook: {e}", exc_info=True)
-                return {"status": "error", "error": str(e)}
+            form_data = dict(await request.form())
+            twiml = await self.twilio_whatsapp_chat.handle_webhook(form_data)
+            from fastapi import Response
+            return Response(content=twiml, media_type="text/xml")
 
         @app.post("/twilio/voice")
         async def twilio_voice_webhook(request: Request):
@@ -222,7 +192,8 @@ class Dashboard:
 
         logger.info(f"Starting dashboard server on http://{self.host}:{self.port}")
         logger.info(f"Telegram webhook endpoint: http://{self.host}:{self.port}/telegram/webhook")
-        logger.info(f"WhatsApp webhook endpoint: http://{self.host}:{self.port}/whatsapp/webhook")
+        logger.info(f"Twilio WhatsApp webhook: http://{self.host}:{self.port}/twilio/whatsapp")
+        logger.info(f"Twilio Voice webhook: http://{self.host}:{self.port}/twilio/voice")
         await server.serve()
 
     def _get_dashboard_html(self) -> str:

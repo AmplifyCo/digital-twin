@@ -76,12 +76,14 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID"),
         
-        # Twilio Voice
+        # Twilio Voice & WhatsApp
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
         twilio_phone_number=os.getenv("TWILIO_PHONE_NUMBER"),
+        twilio_whatsapp_number=os.getenv("TWILIO_WHATSAPP_NUMBER") or 
+            (f"whatsapp:{os.getenv('TWILIO_PHONE_NUMBER')}" if os.getenv("TWILIO_PHONE_NUMBER") and not os.getenv("TWILIO_PHONE_NUMBER").startswith("whatsapp:") else os.getenv("TWILIO_PHONE_NUMBER")),
         
-        # WhatsApp (Meta Cloud API)
+        # WhatsApp (Meta Cloud API - Deprecated but kept for fallback/legacy)
         whatsapp_api_token=os.getenv("WHATSAPP_API_TOKEN"),
         whatsapp_phone_id=os.getenv("WHATSAPP_PHONE_ID"), 
         whatsapp_verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN"),

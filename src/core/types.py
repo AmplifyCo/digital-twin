@@ -78,12 +78,13 @@ class AgentConfig:
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     
-    # Twilio Voice
+    # Twilio Voice & WhatsApp
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
+    twilio_whatsapp_number: Optional[str] = None
 
-    # WhatsApp (Meta Cloud API)
+    # WhatsApp (Meta Cloud API - Deprecated but kept for fallback/legacy)
     whatsapp_api_token: Optional[str] = None
     whatsapp_phone_id: Optional[str] = None
     whatsapp_verify_token: Optional[str] = None
