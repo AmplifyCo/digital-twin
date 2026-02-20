@@ -83,6 +83,26 @@ class GeminiClient:
         if anthropic_api_key:
             os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
 
+    def _sanitize_schema(self, schema: Any) -> Any:
+        """Recursively sanitize JSON schema to prevent LiteLLM/Vertex crashes.
+        
+        Fixes issues where LiteLLM expects a dict but gets a string, or chokes on 'anyOf'.
+        """
+        if isinstance(schema, list):
+            return [self._sanitize_schema(item) for item in schema]
+        elif isinstance(schema, dict):
+            # LiteLLM vertex parser crashes on 'anyOf' if it's not perfectly formed,
+            # or if it hits a string where it expects a dict with .get()
+            sanitized = {}
+            for k, v in schema.items():
+                if k == "anyOf":
+                    # Strip anyOf entirely to be safe, Gemini often doesn't need it
+                    # or it causes Vertex parse crashes.
+                    continue
+                sanitized[k] = self._sanitize_schema(v)
+            return sanitized
+        return schema
+
     def _convert_tools_for_litellm(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert Anthropic tool format to OpenAI/LiteLLM function format.
 
@@ -94,12 +114,16 @@ class GeminiClient:
         """
         litellm_tools = []
         for tool in tools:
+            # Sanitize the schema aggressively before handing to LiteLLM
+            raw_schema = tool.get("input_schema", {})
+            safe_schema = self._sanitize_schema(raw_schema)
+            
             litellm_tools.append({
                 "type": "function",
                 "function": {
                     "name": tool.get("name", ""),
                     "description": tool.get("description", ""),
-                    "parameters": tool.get("input_schema", {})
+                    "parameters": safe_schema
                 }
             })
         return litellm_tools
@@ -247,6 +271,10 @@ class GeminiClient:
             # Add tools if provided
             if tools:
                 call_kwargs["tools"] = self._convert_tools_for_litellm(tools)
+
+            # Ensure LiteLLM can find the key in the environment since we are routing explicitly
+            if self.api_key:
+                os.environ["GEMINI_API_KEY"] = self.api_key
 
             # Retry Loop
             last_exception = None
