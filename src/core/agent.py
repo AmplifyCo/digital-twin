@@ -257,9 +257,9 @@ class AutonomousAgent:
                     system=system_prompt, max_tokens=max_tokens
                 )
             except Exception as e:
-                logger.warning(f"Gemini Flash failed ({str(e)[:60]}), trying Claude...")
+                logger.warning(f"Gemini Flash failed ({str(e)[:60]}), trying fallback...")
                 return await self.gemini_client.create_message(
-                    model=self.MODEL_CLAUDE_SONNET,
+                    model=self.config.subagent_model,
                     messages=messages, tools=tools,
                     system=system_prompt, max_tokens=max_tokens
                 )
@@ -267,9 +267,9 @@ class AutonomousAgent:
         elif model_tier == "haiku":
             # ── Claude Haiku primary → Gemini Flash fallback ──
             try:
-                logger.info("💨 LiteLLM → Claude Haiku")
+                logger.info(f"💨 LiteLLM → {self.config.chat_model}")
                 return await self.gemini_client.create_message(
-                    model=self.MODEL_CLAUDE_HAIKU,
+                    model=self.config.chat_model,
                     messages=messages, tools=tools,
                     system=system_prompt, max_tokens=max_tokens
                 )
@@ -285,9 +285,9 @@ class AutonomousAgent:
             # ── Claude Sonnet primary → retry → Gemini Pro (email compose) ──
             for attempt in range(2):
                 try:
-                    logger.info(f"✍️ LiteLLM → Claude Sonnet (quality, attempt {attempt + 1})")
+                    logger.info(f"✍️ LiteLLM → {self.config.subagent_model} (quality, attempt {attempt + 1})")
                     return await self.gemini_client.create_message(
-                        model=self.MODEL_CLAUDE_SONNET,
+                        model=self.config.subagent_model,
                         messages=messages, tools=tools,
                         system=system_prompt, max_tokens=max_tokens
                     )
@@ -310,11 +310,11 @@ class AutonomousAgent:
                         raise e
 
         else:
-            # ── Claude Sonnet primary → Gemini Flash fallback (default) ──
+            # ── Standard/Sonnet primary (default) ──
             try:
-                logger.info("🧠 LiteLLM → Claude Sonnet")
+                logger.info(f"🧠 LiteLLM → {self.config.subagent_model}")
                 return await self.gemini_client.create_message(
-                    model=self.MODEL_CLAUDE_SONNET,
+                    model=self.config.subagent_model,
                     messages=messages, tools=tools,
                     system=system_prompt, max_tokens=max_tokens
                 )
