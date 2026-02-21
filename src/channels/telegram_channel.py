@@ -50,14 +50,25 @@ class TelegramChannel:
         else:
             logger.info("Telegram channel disabled")
 
-    async def setup_webhook(self):
-        """Set up webhook with Telegram."""
+    async def setup_webhook(self, secret_token: str = ""):
+        """Set up webhook with Telegram.
+
+        Args:
+            secret_token: If provided, Telegram will send this value in the
+                          X-Telegram-Bot-Api-Secret-Token header on every update.
+                          Must be 1-256 chars, only [A-Za-z0-9_-] allowed.
+        """
         if not self.enabled or not self.webhook_url:
             return False
 
         try:
-            await self.bot.set_webhook(url=self.webhook_url)
-            logger.info(f"✅ Telegram webhook set: {self.webhook_url}")
+            kwargs = {"url": self.webhook_url}
+            if secret_token:
+                # Telegram only allows alphanumeric + _ and - in the secret token
+                safe_token = secret_token[:256]
+                kwargs["secret_token"] = safe_token
+            await self.bot.set_webhook(**kwargs)
+            logger.info(f"✅ Telegram webhook set: {self.webhook_url}" + (" (with secret token)" if secret_token else ""))
 
             return True
 

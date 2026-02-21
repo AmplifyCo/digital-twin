@@ -1,7 +1,11 @@
 """Simple web dashboard for monitoring the agent."""
 
 import asyncio
+import hashlib
+import hmac
 import logging
+import os
+import secrets
 from datetime import datetime
 from typing import Dict, Any, List
 import json
@@ -74,6 +78,64 @@ class Dashboard:
         if len(self.logs) > self.max_logs:
             self.logs = self.logs[-self.max_logs:]
 
+    def _configure_webhook_security(self, twilio_auth_token: str = "", base_url: str = ""):
+        """Store credentials needed for webhook signature validation.
+
+        Called from main.py after credentials are loaded from env.
+        Must be called before start() so the webhook handlers can validate.
+
+        Args:
+            twilio_auth_token: Twilio Auth Token (used to verify HMAC-SHA1 signatures)
+            base_url: Public HTTPS base URL (e.g. https://webhook.amplify-pixels.com)
+        """
+        self._twilio_auth_token = twilio_auth_token
+        self._base_url = base_url.rstrip("/")
+        # Generate a random secret for Telegram webhook validation
+        # This is sent to Telegram when registering the webhook and verified on each update
+        self._telegram_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET") or secrets.token_hex(32)
+        logger.info("Webhook security configured (Twilio HMAC + Telegram secret token)")
+
+    def _validate_twilio_signature(self, request_url: str, params: dict, signature: str) -> bool:
+        """Validate Twilio webhook signature (HMAC-SHA1).
+
+        Twilio signs every webhook request. An invalid/missing signature means
+        the request did NOT come from Twilio — reject it.
+
+        See: https://www.twilio.com/docs/usage/webhooks/webhooks-security
+        """
+        auth_token = getattr(self, '_twilio_auth_token', '')
+        if not auth_token:
+            # No token configured — log warning but allow (dev mode)
+            logger.warning("Twilio auth token not set — skipping signature validation (dev mode)")
+            return True
+        if not signature:
+            logger.warning(f"Missing X-Twilio-Signature on request to {request_url}")
+            return False
+        try:
+            from twilio.request_validator import RequestValidator
+            validator = RequestValidator(auth_token)
+            return validator.validate(request_url, params, signature)
+        except Exception as e:
+            logger.error(f"Twilio signature validation error: {e}")
+            return False
+
+    def _validate_telegram_secret(self, header_token: str) -> bool:
+        """Validate Telegram webhook secret token.
+
+        Telegram sends the secret token in X-Telegram-Bot-Api-Secret-Token.
+        Verified with a constant-time comparison to prevent timing attacks.
+        """
+        expected = getattr(self, '_telegram_secret', '')
+        if not expected:
+            return True  # Not configured — dev mode
+        if not header_token:
+            return False
+        return hmac.compare_digest(expected, header_token)
+
+    def get_telegram_webhook_secret(self) -> str:
+        """Return the Telegram webhook secret (set during webhook registration)."""
+        return getattr(self, '_telegram_secret', '')
+
     def set_telegram_chat(self, telegram_chat):
         """Set Telegram chat handler for webhook endpoint.
 
@@ -116,13 +178,19 @@ class Dashboard:
             return self._get_dashboard_html()
 
         @app.get("/api/status", response_class=self.JSONResponse)
-        async def get_status():
-            """Get current status."""
+        async def get_status(request: Request):
+            """Get current status — restricted to localhost."""
+            if request.client and request.client.host not in ("127.0.0.1", "::1"):
+                from fastapi import Response as FR
+                return FR(status_code=403)
             return self.status
 
         @app.get("/api/logs", response_class=self.JSONResponse)
-        async def get_logs():
-            """Get recent logs."""
+        async def get_logs(request: Request):
+            """Get recent logs — restricted to localhost."""
+            if request.client and request.client.host not in ("127.0.0.1", "::1"):
+                from fastapi import Response as FR
+                return FR(status_code=403)
             return {"logs": self.logs[-50:]}  # Last 50 logs
 
         @app.get("/health")
@@ -132,32 +200,43 @@ class Dashboard:
 
         @app.post("/telegram/webhook")
         async def telegram_webhook(request: Request):
-            """Handle Telegram webhook."""
+            """Handle Telegram webhook — validates secret token."""
+            from fastapi import Response as FR
+            # Validate Telegram secret token
+            tg_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if not self._validate_telegram_secret(tg_secret):
+                logger.warning(f"Telegram webhook rejected: invalid secret token from {request.client.host if request.client else 'unknown'}")
+                return FR(status_code=403)
+
             if not hasattr(self, 'telegram_chat') or not self.telegram_chat:
                 logger.warning("Telegram webhook called but chat handler not set")
                 return {"ok": False, "error": "Chat handler not configured"}
 
             try:
-                # Get update data
                 update_data = await request.json()
                 logger.debug(f"Received Telegram webhook: {update_data}")
-
-                # Handle with TelegramChat
                 result = await self.telegram_chat.handle_webhook(update_data)
                 return result
-
             except Exception as e:
                 logger.error(f"Error in Telegram webhook: {e}", exc_info=True)
                 return {"ok": False, "error": str(e)}
 
         @app.post("/twilio/whatsapp")
         async def twilio_whatsapp_webhook(request: Request):
-            """Handle incoming Twilio WhatsApp message (POST)."""
+            """Handle incoming Twilio WhatsApp message — validates Twilio signature."""
             from fastapi import Response
+            form_data = dict(await request.form())
+
+            base = getattr(self, '_base_url', '')
+            url = f"{base}/twilio/whatsapp" if base else str(request.url)
+            sig = request.headers.get("X-Twilio-Signature", "")
+            if not self._validate_twilio_signature(url, form_data, sig):
+                logger.warning(f"Twilio WhatsApp webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
+                return Response(status_code=403)
+
             if not getattr(self, "twilio_whatsapp_chat", None):
                 return Response("Online", media_type="text/xml")
-                
-            form_data = dict(await request.form())
+
             twiml = await self.twilio_whatsapp_chat.handle_webhook(form_data)
             return Response(content=twiml, media_type="text/xml")
 
@@ -180,23 +259,39 @@ class Dashboard:
 
         @app.post("/twilio/voice")
         async def twilio_voice_webhook(request: Request):
-            """Handle incoming Twilio Voice call (POST)."""
+            """Handle incoming Twilio Voice call — validates Twilio signature."""
             from fastapi import Response
+            form_data = dict(await request.form())
+
+            base = getattr(self, '_base_url', '')
+            url = f"{base}/twilio/voice" if base else str(request.url)
+            sig = request.headers.get("X-Twilio-Signature", "")
+            if not self._validate_twilio_signature(url, form_data, sig):
+                logger.warning(f"Twilio Voice webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
+                return Response(status_code=403)
+
             if not getattr(self, "twilio_voice_chat", None):
                 return Response("Online", media_type="text/xml")
-                
-            form_data = dict(await request.form())
+
             twiml = await self.twilio_voice_chat.handle_incoming_call(form_data)
             return Response(twiml, media_type="text/xml")
 
         @app.post("/twilio/voice/gather")
         async def twilio_voice_gather_webhook(request: Request):
-            """Handle transcribed speech from Twilio Gather (POST)."""
+            """Handle transcribed speech from Twilio Gather — validates Twilio signature."""
             from fastapi import Response
+            form_data = dict(await request.form())
+
+            base = getattr(self, '_base_url', '')
+            url = f"{base}/twilio/voice/gather" if base else str(request.url)
+            sig = request.headers.get("X-Twilio-Signature", "")
+            if not self._validate_twilio_signature(url, form_data, sig):
+                logger.warning(f"Twilio Voice/gather webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
+                return Response(status_code=403)
+
             if not getattr(self, "twilio_voice_chat", None):
                 return Response("Online", media_type="text/xml")
-                
-            form_data = dict(await request.form())
+
             twiml = await self.twilio_voice_chat.handle_gather(form_data)
             return Response(twiml, media_type="text/xml")
 

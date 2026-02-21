@@ -153,6 +153,13 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         telegram = TelegramNotifier(config.telegram_bot_token, config.telegram_chat_id)
         dashboard = Dashboard(config.dashboard_host, config.dashboard_port)
 
+        # Configure webhook security (Twilio HMAC-SHA1 + Telegram secret token)
+        _nova_base_url = os.getenv("NOVA_BASE_URL", "").rstrip("/")
+        dashboard._configure_webhook_security(
+            twilio_auth_token=config.twilio_auth_token or "",
+            base_url=_nova_base_url,
+        )
+
         # Send startup notification
         await telegram.notify(
             f"🚀 *Agent Starting*"
@@ -417,7 +424,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             # Setup webhook after dashboard starts
             if telegram_chat and telegram_chat.webhook_url:
                 await asyncio.sleep(2)  # Give dashboard time to start
-                await telegram_chat.setup_webhook()
+                _tg_secret = dashboard.get_telegram_webhook_secret()
+                await telegram_chat.setup_webhook(secret_token=_tg_secret)
 
         # Show Telegram info
         if telegram.enabled:
