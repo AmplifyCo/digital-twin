@@ -161,6 +161,16 @@ class TwilioCallTool(BaseTool):
             logger.warning(f"ElevenLabs TTS failed: {e}")
             return None
 
+    def _gather_action_url(self) -> str:
+        """Build absolute gather action URL for outbound call TwiML.
+
+        Twilio requires absolute URLs in TwiML passed inline to calls.create().
+        Relative URLs like '/twilio/voice/gather' resolve to api.twilio.com — wrong.
+        """
+        if self.base_url:
+            return f"{self.base_url.rstrip('/')}/twilio/voice/gather"
+        return "/twilio/voice/gather"  # Fallback (works for inbound webhook calls)
+
     def _build_twiml_play(self, audio_url: str) -> str:
         """Build TwiML that plays a pre-generated audio file and starts listening.
 
@@ -170,10 +180,11 @@ class TwilioCallTool(BaseTool):
         Returns:
             TwiML XML string
         """
+        gather_url = self._gather_action_url()
         return (
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<Response>"
-            '<Gather input="speech" action="/twilio/voice/gather" speechTimeout="auto" language="en-US">'
+            f'<Gather input="speech" action="{gather_url}" speechTimeout="auto" language="en-US">'
             f"<Play>{escape(audio_url)}</Play>"
             "</Gather>"
             "</Response>"
@@ -191,11 +202,12 @@ class TwilioCallTool(BaseTool):
         """
         voice = self.GOOGLE_VOICES.get(voice_key, self.GOOGLE_VOICES["female"])
         safe_message = escape(message)
+        gather_url = self._gather_action_url()
 
         return (
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<Response>"
-            '<Gather input="speech" action="/twilio/voice/gather" speechTimeout="auto" language="en-US">'
+            f'<Gather input="speech" action="{gather_url}" speechTimeout="auto" language="en-US">'
             f'<Say voice="{voice}" language="en-US">{safe_message}</Say>'
             "</Gather>"
             "</Response>"

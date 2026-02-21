@@ -1416,7 +1416,8 @@ Examples:
                         if rel and rel != "unknown":
                             line += f" ({rel})"
                         if contact.get("phone"):
-                            line += f" — Phone: +{contact['phone']}"
+                            ph = contact['phone']
+                            line += f" — Phone: {ph if ph.startswith('+') else '+' + ph}"
                         if contact.get("email"):
                             line += f" — Email: {contact['email']}"
                         contact_lines.append(line)
