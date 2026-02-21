@@ -232,13 +232,20 @@ class TwilioVoiceChannel:
                 # NORMAL MODE: Someone called us or general conversation
                 contextualized_message = speech_result
 
-            # Process via ConversationManager
-            ai_response = await self.conversation_manager.process_message(
-                message=contextualized_message,
-                channel="voice",
-                user_id=user_number,
-                enable_periodic_updates=False
-            )
+            # Fast-path voice processing — single LLM call, skips intent parsing + agent loop
+            # Saves ~1s per turn vs full process_message() pipeline (critical for voice UX)
+            if hasattr(self.conversation_manager, 'process_voice_message'):
+                ai_response = await self.conversation_manager.process_voice_message(
+                    message=contextualized_message,
+                    user_id=user_number,
+                )
+            else:
+                ai_response = await self.conversation_manager.process_message(
+                    message=contextualized_message,
+                    channel="voice",
+                    user_id=user_number,
+                    enable_periodic_updates=False
+                )
 
             # Check for goodbye / end of call
             is_goodbye = any(
