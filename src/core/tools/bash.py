@@ -14,7 +14,12 @@ class BashTool(BaseTool):
     """Tool for executing bash commands in a sandboxed environment."""
 
     name = "bash"
-    description = "Execute bash commands safely. Returns stdout, stderr, and return code."
+    description = (
+        "Tool to execute shell commands. Returns stdout, stderr, and exit code. "
+        "Use for: system operations, file processing, running scripts, data transformation. "
+        "Use when: no higher-level tool exists for the operation. "
+        "Never use to circumvent security controls or bypass access restrictions."
+    )
     parameters = {
         "command": {
             "type": "string",

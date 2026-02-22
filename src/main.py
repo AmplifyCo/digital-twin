@@ -19,6 +19,9 @@ from src.core.brain.digital_clone_brain import DigitalCloneBrain
 from src.core.spawner.agent_factory import AgentFactory
 from src.core.spawner.orchestrator import Orchestrator
 from src.core.conversation_manager import ConversationManager
+from src.core.task_queue import TaskQueue
+from src.core.goal_decomposer import GoalDecomposer
+from src.core.task_runner import TaskRunner
 from src.integrations.anthropic_client import AnthropicClient
 from src.integrations.model_router import ModelRouter
 from src.channels.telegram_channel import TelegramChannel
@@ -362,6 +365,19 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 semantic_router=semantic_router  # Optional — Fast path for intents
             )
 
+            # ── Autonomy Stack: Persistent Tasks + Background Execution ───────
+            logger.info("🎯 Initializing autonomy stack (TaskQueue + GoalDecomposer + TaskRunner)...")
+            task_queue = TaskQueue(data_dir="./data")
+            goal_decomposer = GoalDecomposer(gemini_client=gemini_client)
+
+            # Wire task_queue into ConversationManager (background task detection)
+            conversation_manager.task_queue = task_queue
+
+            # Wire task_queue into the NovaTaskTool in agent's registry
+            agent.tools.set_task_queue(task_queue)
+
+            logger.info("✅ Autonomy stack initialized")
+
             # Initialize TelegramChannel (thin transport wrapper)
             telegram_chat = TelegramChannel(
                 bot_token=config.telegram_bot_token,
@@ -426,6 +442,19 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 await asyncio.sleep(2)  # Give dashboard time to start
                 _tg_secret = dashboard.get_telegram_webhook_secret()
                 await telegram_chat.setup_webhook(secret_token=_tg_secret)
+
+        # Start background TaskRunner (autonomous multi-step task execution)
+        _whatsapp_ch = twilio_whatsapp_channel if 'twilio_whatsapp_channel' in locals() else None
+        _task_runner = TaskRunner(
+            task_queue=task_queue,
+            goal_decomposer=goal_decomposer,
+            agent=agent,
+            telegram_notifier=telegram,
+            brain=digital_brain,
+            whatsapp_channel=_whatsapp_ch,
+        )
+        asyncio.create_task(_task_runner.start())
+        logger.info("🚀 Background TaskRunner started")
 
         # Show Telegram info
         if telegram.enabled:

@@ -17,9 +17,10 @@ class WebSearchTool(BaseTool):
 
     name = "web_search"
     description = (
-        "Search the web for information. Returns titles, URLs, and snippets. "
-        "Use this to find current information, look up businesses, find phone numbers, "
-        "research topics, or get any information that requires a web search."
+        "Tool to search the web for any topic. Returns titles, URLs, and snippets. "
+        "Use when you need to find information but don't have a specific URL. "
+        "Use before web_fetch: search first, then fetch the most relevant URLs. "
+        "Use when: researching topics, finding current information, looking up businesses or phone numbers."
     )
     parameters = {
         "query": {

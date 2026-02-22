@@ -45,7 +45,7 @@ class ToolRegistry:
         # Get safety config
         safety_config = self.config.get('safety', {})
 
-        # Register default tools with configuration
+        # ── System Tools ─────────────────────────────────────────────────────
         self.register(BashTool(
             allowed_commands=safety_config.get('allowed_commands', []),
             blocked_commands=safety_config.get('blocked_commands', []),
@@ -53,21 +53,22 @@ class ToolRegistry:
             allowed_sudo_commands=safety_config.get('allowed_sudo_commands', [])
         ))
         self.register(FileTool())
-        self.register(WebTool())
-        self.register(BrowserTool())
-        self.register(WebSearchTool())
 
-        # Register Email tool if credentials provided
+        # ── Web Tools ─────────────────────────────────────────────────────────
+        # Use web_search first → web_fetch for specific URLs → browser for JS pages
+        self.register(WebSearchTool())   # General queries (DuckDuckGo, no API key)
+        self.register(WebTool())         # Fetch a specific URL
+        self.register(BrowserTool())     # JS-heavy pages / screenshots
+
+        # ── Communication Tools (credential-gated) ────────────────────────────
         self._register_email_tool()
-
-        # Register Calendar tool if credentials provided
         self._register_calendar_tool()
+        self._register_x_tool()          # X (Twitter): search + post (renamed x_post → x_tool)
 
-        # Register X (Twitter) tool if credentials provided
-        self._register_x_tool()
-
-        # Register Reminder tool (always available, no credentials needed)
+        # ── Personal Assistant Tools (always available) ───────────────────────
         self._register_reminder_tool()
+        self._register_contacts_tool()
+        self._register_nova_task_tool()  # Background task queue (self-direction)
 
     def register(self, tool: BaseTool):
         """Register a tool.
@@ -388,3 +389,31 @@ class ToolRegistry:
             logger.info("⏰ Reminder tool registered")
         except Exception as e:
             logger.warning(f"Failed to register Reminder tool: {e}")
+
+    def _register_contacts_tool(self):
+        """Register Contacts tool if not already registered (always available)."""
+        if "contacts" not in self.tools:
+            try:
+                from .contacts import ContactsTool
+                self.register(ContactsTool(data_dir="./data"))
+                logger.info("📇 Contacts tool registered")
+            except Exception as e:
+                logger.warning(f"Failed to register Contacts tool: {e}")
+
+    def _register_nova_task_tool(self):
+        """Register NovaTaskTool for background autonomous task execution."""
+        try:
+            from .nova_task_tool import NovaTaskTool
+            # task_queue is injected later via set_task_queue()
+            self._nova_task_tool = NovaTaskTool(task_queue=None)
+            self.register(self._nova_task_tool)
+            logger.info("🎯 NovaTask tool registered")
+        except Exception as e:
+            logger.warning(f"Failed to register NovaTask tool: {e}")
+
+    def set_task_queue(self, task_queue):
+        """Inject task_queue into NovaTaskTool after initialization."""
+        tool = self.tools.get("nova_task")
+        if tool:
+            tool.task_queue = task_queue
+            logger.info("🎯 NovaTask tool connected to TaskQueue")

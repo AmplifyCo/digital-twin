@@ -1,0 +1,298 @@
+"""Persistent task queue for Nova's background autonomous execution.
+
+Uses SQLite so tasks survive service restarts and are safe for concurrent access.
+Tasks move through: pending → decomposing → running → done | failed
+
+Design inspired by SagaLLM checkpointing and Voyager skill library patterns.
+"""
+
+import json
+import logging
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Subtask:
+    """A single decomposed step within a larger task."""
+    description: str
+    tool_hints: List[str] = field(default_factory=list)
+    model_tier: str = "flash"
+    status: str = "pending"   # pending | running | done | failed | skipped
+    result: str = ""
+    error: str = ""
+
+
+@dataclass
+class Task:
+    """A persistent background task with decomposed subtasks."""
+    id: str
+    goal: str
+    channel: str           # whatsapp | telegram | voice — where to notify on completion
+    user_id: str           # user identifier for the notification
+    status: str            # pending | decomposing | running | done | failed
+    subtasks: List[Subtask] = field(default_factory=list)
+    result: str = ""
+    error: str = ""
+    notify_on_complete: bool = True
+    created_at: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+
+    def current_subtask_idx(self) -> int:
+        """Return index of first non-done subtask, or -1 if all done."""
+        for i, st in enumerate(self.subtasks):
+            if st.status in ("pending", "running", "failed"):
+                return i
+        return -1
+
+    def all_subtasks_done(self) -> bool:
+        return all(st.status in ("done", "skipped") for st in self.subtasks)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "goal": self.goal,
+            "channel": self.channel,
+            "user_id": self.user_id,
+            "status": self.status,
+            "subtasks": [
+                {
+                    "description": st.description,
+                    "tool_hints": st.tool_hints,
+                    "model_tier": st.model_tier,
+                    "status": st.status,
+                    "result": st.result,
+                    "error": st.error,
+                }
+                for st in self.subtasks
+            ],
+            "result": self.result,
+            "error": self.error,
+            "notify_on_complete": self.notify_on_complete,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }
+
+
+class TaskQueue:
+    """SQLite-backed persistent task queue.
+
+    Thread/async-safe: each operation opens its own connection.
+    Survives service restarts — tasks persist until explicitly completed.
+    """
+
+    def __init__(self, data_dir: str = "./data"):
+        self.db_path = Path(data_dir) / "nova_tasks.db"
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        logger.info(f"TaskQueue initialized at {self.db_path}")
+
+    @contextmanager
+    def _conn(self):
+        """Yield a short-lived SQLite connection with WAL mode for concurrency."""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _init_db(self):
+        """Create tables if they don't exist."""
+        with self._conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    goal TEXT NOT NULL,
+                    channel TEXT NOT NULL DEFAULT 'telegram',
+                    user_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    subtasks_json TEXT NOT NULL DEFAULT '[]',
+                    result TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    notify_on_complete INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT
+                )
+            """)
+
+    # ── Write operations ─────────────────────────────────────────────────────
+
+    def enqueue(
+        self,
+        goal: str,
+        channel: str = "telegram",
+        user_id: str = "",
+        notify_on_complete: bool = True,
+    ) -> str:
+        """Add a new task to the queue. Returns the task ID."""
+        task_id = uuid.uuid4().hex[:12]
+        now = datetime.utcnow().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO tasks
+                   (id, goal, channel, user_id, status, subtasks_json,
+                    notify_on_complete, created_at)
+                   VALUES (?, ?, ?, ?, 'pending', '[]', ?, ?)""",
+                (task_id, goal, channel, user_id, int(notify_on_complete), now),
+            )
+        logger.info(f"Enqueued task {task_id}: {goal[:60]}")
+        return task_id
+
+    def set_subtasks(self, task_id: str, subtasks: List[Subtask]):
+        """Store decomposed subtasks and mark task as 'running'."""
+        subtasks_json = json.dumps([
+            {
+                "description": st.description,
+                "tool_hints": st.tool_hints,
+                "model_tier": st.model_tier,
+                "status": st.status,
+                "result": st.result,
+                "error": st.error,
+            }
+            for st in subtasks
+        ])
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE tasks SET subtasks_json=?, status='running', started_at=?
+                   WHERE id=?""",
+                (subtasks_json, datetime.utcnow().isoformat(), task_id),
+            )
+
+    def update_subtask(self, task_id: str, subtask_idx: int, status: str, result: str = "", error: str = ""):
+        """Update a single subtask's status and result."""
+        task = self.get_task(task_id)
+        if not task:
+            return
+        if subtask_idx >= len(task.subtasks):
+            return
+        task.subtasks[subtask_idx].status = status
+        task.subtasks[subtask_idx].result = result
+        task.subtasks[subtask_idx].error = error
+        subtasks_json = json.dumps([
+            {
+                "description": st.description,
+                "tool_hints": st.tool_hints,
+                "model_tier": st.model_tier,
+                "status": st.status,
+                "result": st.result,
+                "error": st.error,
+            }
+            for st in task.subtasks
+        ])
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET subtasks_json=? WHERE id=?",
+                (subtasks_json, task_id),
+            )
+
+    def mark_done(self, task_id: str, result: str = ""):
+        """Mark task as completed with a result summary."""
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE tasks SET status='done', result=?, completed_at=?
+                   WHERE id=?""",
+                (result, datetime.utcnow().isoformat(), task_id),
+            )
+        logger.info(f"Task {task_id} marked done")
+
+    def mark_failed(self, task_id: str, error: str = ""):
+        """Mark task as failed."""
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE tasks SET status='failed', error=?, completed_at=?
+                   WHERE id=?""",
+                (error, datetime.utcnow().isoformat(), task_id),
+            )
+        logger.warning(f"Task {task_id} marked failed: {error[:80]}")
+
+    def cancel(self, task_id: str):
+        """Cancel a pending or running task."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET status='failed', error='Cancelled by user' WHERE id=? AND status IN ('pending', 'running', 'decomposing')",
+                (task_id,),
+            )
+
+    # ── Read operations ───────────────────────────────────────────────────────
+
+    def dequeue_next(self) -> Optional[Task]:
+        """Return the oldest pending task (None if none available)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE status='pending' ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if not row:
+                return None
+            # Mark as decomposing so concurrent processes don't double-pick
+            conn.execute(
+                "UPDATE tasks SET status='decomposing' WHERE id=?", (row["id"],)
+            )
+            return self._row_to_task(row)
+
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Fetch a task by ID."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            return self._row_to_task(row) if row else None
+
+    def get_pending_count(self) -> int:
+        with self._conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status IN ('pending', 'decomposing', 'running')"
+            ).fetchone()[0]
+
+    def get_recent_tasks(self, limit: int = 10) -> List[Task]:
+        """Return recent tasks (newest first) for status display."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [self._row_to_task(r) for r in rows]
+
+    # ── Internal ─────────────────────────────────────────────────────────────
+
+    def _row_to_task(self, row: sqlite3.Row) -> Task:
+        subtask_dicts = json.loads(row["subtasks_json"] or "[]")
+        subtasks = [
+            Subtask(
+                description=s["description"],
+                tool_hints=s.get("tool_hints", []),
+                model_tier=s.get("model_tier", "flash"),
+                status=s.get("status", "pending"),
+                result=s.get("result", ""),
+                error=s.get("error", ""),
+            )
+            for s in subtask_dicts
+        ]
+        return Task(
+            id=row["id"],
+            goal=row["goal"],
+            channel=row["channel"],
+            user_id=row["user_id"],
+            status=row["status"],
+            subtasks=subtasks,
+            result=row["result"] or "",
+            error=row["error"] or "",
+            notify_on_complete=bool(row["notify_on_complete"]),
+            created_at=row["created_at"] or "",
+            started_at=row["started_at"] or "",
+            completed_at=row["completed_at"] or "",
+        )

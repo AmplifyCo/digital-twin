@@ -51,9 +51,13 @@ class BrowserTool(BaseTool):
     """
 
     name = "browser"
-    description = """Browse web pages. Choose the right mode for the task:
-    - text: Fast, lightweight text extraction via w3m/curl. Best for articles, docs, APIs.
-    - full: Chromium browser with screenshot for visual verification. Use for JS-heavy sites, login pages, or when you need to see the page layout."""
+    description = (
+        "Tool to load a webpage using a real browser. "
+        "Use when web_fetch returns empty or incomplete content (JavaScript-heavy pages). "
+        "Use 'text' mode for fast text extraction (articles, docs). "
+        "Use 'full' mode for JS-rendered pages or when you need a visual screenshot. "
+        "Slower than web_fetch — only use when web_fetch fails."
+    )
 
     parameters = {
         "url": {

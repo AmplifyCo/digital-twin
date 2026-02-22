@@ -18,12 +18,12 @@ class XTool(BaseTool):
     Only posts when explicitly asked by the user — no auto-interactions.
     """
 
-    name = "x_post"
+    name = "x_tool"
     description = (
-        "Post tweets to X (Twitter) and search X for posts/discussions. "
-        "Can post to timeline or to a specific Community. "
-        "Can search X for any topic using 'search_tweets' (uses web search — no API tier needed). "
-        "Can also delete tweets, retweet, quote tweet, follow users, and save community IDs."
+        "Tool to interact with X (Twitter) — search, post, retweet, and manage communities. "
+        "Use 'search_tweets' to find X posts/discussions on any topic (no API tier restriction — uses DuckDuckGo). "
+        "Use 'post_tweet' or 'post_to_community' to publish content. "
+        "Use when: researching X opinions, posting updates, or engaging with X communities."
     )
     parameters = {
         "operation": {

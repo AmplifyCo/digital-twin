@@ -13,7 +13,12 @@ class WebTool(BaseTool):
     """Tool for fetching web content."""
 
     name = "web_fetch"
-    description = "Fetch content from a URL. Returns the text content."
+    description = (
+        "Tool to fetch content from a specific URL and return its text. "
+        "Use when you already have a URL to read. "
+        "Do NOT use for general searches — use web_search for that. "
+        "If the page returns empty content (JavaScript-heavy site), use the browser tool instead."
+    )
     parameters = {
         "url": {
             "type": "string",

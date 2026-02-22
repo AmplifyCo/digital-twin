@@ -145,6 +145,9 @@ class ConversationManager:
         # Public reference to the AutonomousAgent for async background delegation
         self.agent = agent
 
+        # Task queue for background autonomous execution (injected by main.py)
+        self.task_queue = None
+
         # Context Thalamus: token budgeting and history management
         from src.core.context_thalamus import ContextThalamus
         self.thalamus = ContextThalamus()
@@ -775,11 +778,34 @@ class ConversationManager:
     ) -> str:
         """Execute task using primary model — routes to correct tier via LiteLLM."""
         logger.info(f"Executing with primary model. Intent: {intent.get('action')}")
-        
+
         # Extract PII map if present
         pii_map = intent.get("_pii_map", {})
         action = intent.get("action", "unknown")
         inferred_task = intent.get("inferred_task")
+
+        # ── BACKGROUND TASK ROUTING ──────────────────────────────────────────
+        # Detect complex/research tasks and route to background queue instead of
+        # running inline. This prevents hallucination and enables multi-step work.
+        if self.task_queue and self._is_background_task(message, intent):
+            goal = inferred_task or message
+            channel = getattr(self, '_current_channel', 'telegram') or 'telegram'
+            user_id = getattr(self, '_current_user_id', '') or ''
+            task_id = self.task_queue.enqueue(goal=goal, channel=channel, user_id=user_id)
+
+            # Update nova_task tool context so it knows the current user
+            nova_tool = self.agent.tools.tools.get("nova_task")
+            if nova_tool:
+                nova_tool.set_context(channel=channel, user_id=user_id)
+
+            pending = self.task_queue.get_pending_count()
+            logger.info(f"Background task enqueued: {task_id} — {goal[:60]}")
+            return (
+                f"Got it — this will take some research across multiple sources. "
+                f"I've queued it for background processing (task {task_id}). "
+                f"You'll get a WhatsApp notification with the full report when it's done. "
+                f"({pending} task(s) queued)"
+            )
 
         # Build enriched execution plan:
         # Intent (what to do) + Tool hints (which tools) + Memory (context) → agent task
@@ -1563,6 +1589,49 @@ Examples:
         except Exception as e:
             logger.error(f"Intent parsing failed completely: {e}")
             return {"action": "unknown", "confidence": 0.3, "parameters": {}}
+
+    # ── Background task routing keywords ────────────────────────────────────
+    _BG_KEYWORDS = frozenset([
+        "research", "gather", "compile", "investigate", "analyze", "survey",
+        "find all", "look up everything", "search for posts", "search x for",
+        "collect information", "deep dive", "study", "monitor", "track",
+        "scan all", "read all", "summarize everything", "report on",
+        "what are people saying", "what does x say", "gather info",
+    ])
+    # Actions that should always go to background
+    _BG_ACTIONS = frozenset(["research", "gather", "compile", "monitor", "survey"])
+    # Tool count threshold: if 3+ distinct tools are needed, background it
+    _BG_TOOL_THRESHOLD = 3
+
+    def _is_background_task(self, message: str, intent: Dict[str, Any]) -> bool:
+        """Return True if this task should be queued for background execution.
+
+        Heuristics (any one triggers background routing):
+        1. Intent action is explicitly a research/gather type
+        2. Message contains background-task keywords
+        3. Task requires 3+ distinct tools (complex multi-step workflow)
+
+        Voice calls and quick questions are never backgrounded.
+        """
+        # Never background voice calls
+        channel = getattr(self, '_current_channel', '') or ''
+        if channel == 'voice':
+            return False
+
+        action = intent.get("action", "")
+        if action in self._BG_ACTIONS:
+            return True
+
+        msg_lower = message.lower()
+        for kw in self._BG_KEYWORDS:
+            if kw in msg_lower:
+                return True
+
+        tool_hints = intent.get("tool_hints", [])
+        if len(set(tool_hints)) >= self._BG_TOOL_THRESHOLD:
+            return True
+
+        return False
 
     async def _build_execution_plan(self, intent: Dict[str, Any], message: str) -> str:
         """Enrich intent with memory context to build a comprehensive agent task.
