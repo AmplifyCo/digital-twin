@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 _BOT_NAME = os.getenv("BOT_NAME", "Nova")
 
-_DECOMPOSE_PROMPT = f"""You are a task planner for an autonomous AI agent named {_BOT_NAME}.
+# Note: uses .format() at runtime — {bot_name}, {tools}, {goal}, {task_id} are runtime variables
+_DECOMPOSE_PROMPT = """You are a task planner for an autonomous AI agent named {bot_name}.
 Your job: break a high-level goal into 3–7 concrete, sequential subtasks.
 
 RULES:
@@ -90,6 +91,7 @@ class GoalDecomposer:
             return self._make_fallback(goal, task_id)
 
         prompt = _DECOMPOSE_PROMPT.format(
+            bot_name=_BOT_NAME,
             tools=tools_str,
             goal=goal,
             task_id=task_id,
