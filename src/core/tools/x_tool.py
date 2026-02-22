@@ -20,15 +20,16 @@ class XTool(BaseTool):
 
     name = "x_post"
     description = (
-        "Post tweets to X (Twitter). Can post to timeline or to a specific Community. "
-        "Can also delete tweets, retweet, quote tweet, and follow users. "
-        "Use post_to_community to post in an X Community by name or ID."
+        "Post tweets to X (Twitter) and search X for posts/discussions. "
+        "Can post to timeline or to a specific Community. "
+        "Can search X for any topic using 'search_tweets' (uses web search — no API tier needed). "
+        "Can also delete tweets, retweet, quote tweet, follow users, and save community IDs."
     )
     parameters = {
         "operation": {
             "type": "string",
-            "description": "Operation: 'post_tweet', 'delete_tweet', 'post_to_community', 'retweet', 'quote_tweet', 'follow_user', or 'save_community'",
-            "enum": ["post_tweet", "delete_tweet", "post_to_community", "retweet", "quote_tweet", "follow_user", "save_community"]
+            "description": "Operation: 'search_tweets', 'post_tweet', 'delete_tweet', 'post_to_community', 'retweet', 'quote_tweet', 'follow_user', or 'save_community'",
+            "enum": ["search_tweets", "post_tweet", "delete_tweet", "post_to_community", "retweet", "quote_tweet", "follow_user", "save_community"]
         },
         "content": {
             "type": "string",
@@ -53,6 +54,14 @@ class XTool(BaseTool):
         "target_username": {
             "type": "string",
             "description": "X username to follow, excluding the @ symbol (e.g., 'elonmusk' or 'xdevelopers', for follow_user)"
+        },
+        "query": {
+            "type": "string",
+            "description": "Search query for 'search_tweets' (e.g., 'OpenClaw autonomous agent', '#AIagents')"
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Max number of results to return for 'search_tweets' (default 10)"
         }
     }
 
@@ -123,11 +132,15 @@ class XTool(BaseTool):
         community_id: Optional[str] = None,
         community_name: Optional[str] = None,
         target_username: Optional[str] = None,
+        query: Optional[str] = None,
+        max_results: int = 10,
         **kwargs
     ) -> ToolResult:
         """Execute X operation."""
         try:
-            if operation == "post_tweet":
+            if operation == "search_tweets":
+                return await self._search_tweets(query, max_results)
+            elif operation == "post_tweet":
                 return await self._post_tweet(content)
             elif operation == "delete_tweet":
                 return await self._delete_tweet(tweet_id)
@@ -158,6 +171,56 @@ class XTool(BaseTool):
                 success=False,
                 error=f"X operation failed: {str(e)}"
             )
+
+    async def _search_tweets(self, query: Optional[str], max_results: int = 10) -> ToolResult:
+        """Search X for tweets/discussions on a topic using DuckDuckGo.
+
+        X API v2 search requires Pro tier ($5k/month). This uses web search
+        to find X content without API restrictions.
+        """
+        if not query:
+            return ToolResult(success=False, error="query is required for search_tweets")
+
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return ToolResult(
+                success=False,
+                error="Missing dependency: pip install duckduckgo-search"
+            )
+
+        # Search specifically on X/Twitter
+        x_query = f"site:x.com OR site:twitter.com {query}"
+        results = []
+        try:
+            with DDGS() as ddgs:
+                for r in ddgs.text(x_query, max_results=max_results):
+                    results.append({
+                        "title": r.get("title", ""),
+                        "url": r.get("href", ""),
+                        "snippet": r.get("body", ""),
+                    })
+        except Exception as e:
+            logger.warning(f"X search via DuckDuckGo failed: {e}")
+            return ToolResult(success=False, error=f"Search failed: {e}")
+
+        if not results:
+            return ToolResult(
+                success=True,
+                output=f"No X posts found for: {query}",
+                metadata={"results": [], "query": query}
+            )
+
+        formatted = f"X search results for '{query}':\n\n"
+        for i, r in enumerate(results, 1):
+            formatted += f"{i}. {r['title']}\n   {r['url']}\n   {r['snippet']}\n\n"
+
+        logger.info(f"X search returned {len(results)} results for: {query}")
+        return ToolResult(
+            success=True,
+            output=formatted.strip(),
+            metadata={"results": results, "query": query, "count": len(results)}
+        )
 
     async def _post_tweet(self, content: Optional[str]) -> ToolResult:
         """Post a tweet to X."""
