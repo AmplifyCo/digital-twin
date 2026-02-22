@@ -12,13 +12,16 @@ Design principles (from AOP research + Voyager):
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from .task_queue import Subtask
 
 logger = logging.getLogger(__name__)
 
-_DECOMPOSE_PROMPT = """You are a task planner for an autonomous AI agent named Nova.
+_BOT_NAME = os.getenv("BOT_NAME", "Nova")
+
+_DECOMPOSE_PROMPT = f"""You are a task planner for an autonomous AI agent named {_BOT_NAME}.
 Your job: break a high-level goal into 3–7 concrete, sequential subtasks.
 
 RULES:

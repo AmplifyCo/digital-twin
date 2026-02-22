@@ -10,6 +10,7 @@ Telegram digest at a configurable time each day (default 9 AM PST).
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -107,7 +108,8 @@ class DailyDigest:
         uptime = self._get_uptime()
 
         # ── Build report ──
-        lines = [f"📊 **Nova Daily Report** — {now.strftime('%b %d, %Y')}"]
+        bot_name = os.getenv("BOT_NAME", "Nova")
+        lines = [f"📊 **{bot_name} Daily Report** — {now.strftime('%b %d, %Y')}"]
         lines.append("")
 
         # Activity

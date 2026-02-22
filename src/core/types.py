@@ -94,6 +94,10 @@ class AgentConfig:
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 18789
 
+    # Identity — configurable per deployment
+    bot_name: str = "Nova"       # What the bot calls itself (e.g. "Aria", "Max")
+    owner_name: str = "User"     # The human owner's name (e.g. "Jane", "Alex")
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "./data/logs/agent.log"

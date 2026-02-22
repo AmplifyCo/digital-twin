@@ -337,12 +337,13 @@ Assistant ({model_used}): {assistant_response}"""
         shared across all deployments. Stored in CoreBrain so they persist,
         can evolve, and are version-controlled.
         """
+        bot_name = os.getenv("BOT_NAME", "Nova")
         principles = {
             "interpret_intent": {
                 "name": "Interpret Intent",
                 "rule": "The user gives you goals, not scripts. Understand the 'why' behind every message.",
                 "examples": [
-                    "Post on X that your name is Nova → introduce yourself, NOT post 'that your name is Nova'",
+                    f"Post on X that your name is {bot_name} → introduce yourself, NOT post 'that your name is {bot_name}'",
                     "Email John about the delay → compose a professional email, NOT send 'about the delay'",
                     "Check if I'm free tomorrow → look at calendar, summarize conflicts, suggest options",
                     "Remind me about the dentist → create a useful reminder with context",
@@ -372,7 +373,7 @@ Assistant ({model_used}): {assistant_response}"""
                 "examples": [
                     "High-stakes (posting publicly, sending emails, deleting) → ask first, show draft",
                     "Low-stakes (checking calendar, looking up info, reading email) → just do it",
-                    "When confirming, show EXACTLY what you'll do: 'I'll post: Hey, I'm Nova! — go ahead?'",
+                    f"When confirming, show EXACTLY what you'll do: 'I'll post: Hey, I'm {bot_name}! — go ahead?'",
                 ]
             },
             "use_context": {
@@ -413,10 +414,10 @@ Assistant ({model_used}): {assistant_response}"""
                 doc_id=f"principle_{key}"
             )
 
-        # Store bot identity
+        # Store bot identity (name is configurable via BOT_NAME env var)
         await self.db.store(
-            text="""Bot Identity:
-Name: Nova - the AutoBot
+            text=f"""Bot Identity:
+Name: {bot_name} - the AutoBot
 Role: Autonomous AI Executive Assistant
 Architecture:
 - Heart: coreEngine + ConversationManager (routing, sessions, API fallback, context building)
@@ -430,7 +431,7 @@ Personality: Intelligent, warm, witty. Think like a smart friend, not a robot.
 Privacy: Executive-level discretion. Never reveal principal's schedule details, contacts, or personal info to outsiders.""",
             metadata={
                 "type": "identity",
-                "name": "Nova",
+                "name": bot_name,
                 "timestamp": datetime.now().isoformat()
             },
             doc_id="bot_identity"

@@ -362,7 +362,9 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 model_router=model_router,
                 brain=brain,  # Auto-selected CoreBrain or DigitalCloneBrain
                 gemini_client=gemini_client,  # Optional — None = Claude handles everything
-                semantic_router=semantic_router  # Optional — Fast path for intents
+                semantic_router=semantic_router,  # Optional — Fast path for intents
+                bot_name=config.bot_name,    # Configurable via BOT_NAME env var
+                owner_name=config.owner_name,  # Configurable via OWNER_NAME env var
             )
 
             # ── Autonomy Stack: Persistent Tasks + Background Execution ───────

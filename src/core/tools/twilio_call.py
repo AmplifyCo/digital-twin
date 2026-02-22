@@ -49,7 +49,7 @@ class TwilioCallTool(BaseTool):
         },
         "mission": {
             "type": "string",
-            "description": "Optional goal for task-oriented calls (e.g. 'Reserve a table for 2 at 7:30 PM tonight. Negotiate for 7:00 or 8:00 if unavailable. Party name: Srinath.'). When set, Nova will have a full back-and-forth conversation to achieve this goal."
+            "description": "Optional goal for task-oriented calls (e.g. 'Reserve a table for 2 at 7:30 PM tonight. Negotiate for 7:00 or 8:00 if unavailable. Party name: Alex.'). When set, the bot will have a full back-and-forth conversation to achieve this goal."
         },
         "voice": {
             "type": "string",

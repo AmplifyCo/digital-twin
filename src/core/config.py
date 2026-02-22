@@ -89,6 +89,10 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
         whatsapp_verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN"),
         whatsapp_allowed_numbers=os.getenv("WHATSAPP_ALLOWED_NUMBERS", "").split(",") if os.getenv("WHATSAPP_ALLOWED_NUMBERS") else [],
 
+        # Identity
+        bot_name=os.getenv("BOT_NAME", "Nova"),
+        owner_name=os.getenv("OWNER_NAME", "User"),
+
         dashboard_enabled=yaml_config.get("monitoring", {}).get("dashboard", {}).get("enabled", True),
         dashboard_host=os.getenv("DASHBOARD_HOST", yaml_config.get("monitoring", {}).get("dashboard", {}).get("host", "0.0.0.0")),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", yaml_config.get("monitoring", {}).get("dashboard", {}).get("port", 18789))),

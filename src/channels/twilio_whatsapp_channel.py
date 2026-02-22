@@ -5,6 +5,7 @@ them to the ConversationManager, and can send outbound messages via Twilio REST 
 """
 
 import logging
+import os
 from typing import Dict, Any, List, Optional
 from twilio.rest import Client
 
@@ -95,7 +96,8 @@ class TwilioWhatsAppChannel:
             # when asked to contact other people.
             clean_allowed = [num.replace('whatsapp:', '') for num in self.allowed_numbers]
             if clean_number in clean_allowed:
-                user_id = "Srinath (Principal)"
+                owner_name = os.getenv("OWNER_NAME", "User")
+                user_id = f"{owner_name} (Principal)"
             else:
                 user_id = clean_number
             

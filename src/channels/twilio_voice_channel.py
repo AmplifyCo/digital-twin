@@ -10,6 +10,7 @@ context is injected into every gather webhook so Nova knows its goal.
 """
 
 import logging
+import os
 import time
 from typing import Dict, Any, List, Optional
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -69,8 +70,11 @@ class TwilioVoiceChannel:
         self,
         call_sid: str,
         mission: str,
-        originator: str = "Srinath (Principal)"
+        originator: str = ""
     ):
+        if not originator:
+            owner_name = os.getenv("OWNER_NAME", "User")
+            originator = f"{owner_name} (Principal)"
         """Register a mission for an outbound call.
 
         When the gather webhook fires, the mission context is injected
@@ -163,7 +167,8 @@ class TwilioVoiceChannel:
 
         # Explicitly identify Principal to prevent LLM hallucination
         if clean_number in clean_allowed:
-            return "Srinath (Principal)"
+            owner_name = os.getenv("OWNER_NAME", "User")
+            return f"{owner_name} (Principal)"
 
         return clean_number
 
@@ -188,7 +193,8 @@ class TwilioVoiceChannel:
 
         logger.info(f"📞 {direction.title()} voice call with {user_number} (CallSid: {call_sid})")
 
-        return await self._generate_twiml(text="Hi, I am Nova. How can I help you?", prompt_for_input=True)
+        bot_name = os.getenv("BOT_NAME", "Nova")
+        return await self._generate_twiml(text=f"Hi, I am {bot_name}. How can I help you?", prompt_for_input=True)
 
     async def handle_gather(self, form_data: Dict[str, str]) -> str:
         """Handle speech recognition result webhook (/twilio/voice/gather).
@@ -223,7 +229,7 @@ class TwilioVoiceChannel:
                     f"[ACTIVE CALL MISSION — You are making this call on behalf of {mission['originator']}]\n"
                     f"YOUR GOAL: {mission['mission']}\n\n"
                     f"The person you called just said: \"{speech_result}\"\n\n"
-                    f"Respond naturally as Nova, Srinath's AI assistant. "
+                    f"Respond naturally as {os.getenv('BOT_NAME', 'Nova')}, {os.getenv('OWNER_NAME', 'your principal')}'s AI assistant. "
                     f"Stay focused on the mission goal. Be polite but purposeful. "
                     f"If your goal is achieved or clearly impossible, say goodbye to end the call."
                 )
@@ -302,7 +308,7 @@ class TwilioVoiceChannel:
                     reporting_task = (
                         f"You just finished a phone call with {user_number}. "
                         f"Here is the transcript of the call:\n\n{history}\n\n"
-                        "Please execute the 'send_whatsapp_message' tool to send a WhatsApp message to Srinath (Principal) "
+                        f"Please execute the 'send_whatsapp_message' tool to send a WhatsApp message to {os.getenv('OWNER_NAME', 'the principal')} "
                         "summarizing the outcome of this call. Be concise but include any relevant details."
                     )
 
