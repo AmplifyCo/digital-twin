@@ -109,6 +109,8 @@ class ConversationManager:
         # ===== CACHING: Build once, reuse every message =====
         # Intelligence principles from CoreBrain (loaded once)
         self._intelligence_principles = None
+        # Nova's purpose (WHY it exists — loaded once from CoreBrain)
+        self._purpose = None
         # Static parts of system prompts (built once, brain context added per-message)
         self._cached_agent_system_prompt = None
         self._cached_chat_system_prompt = None
@@ -1921,6 +1923,27 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
 - Use context: connect dots between messages, use Brain memory"""
         return self._intelligence_principles
 
+    async def _get_purpose(self) -> str:
+        """Load Nova's purpose from CoreBrain (cached after first load).
+
+        Returns:
+            Purpose text for injection at the top of system prompts, or ""
+        """
+        if self._purpose is not None:
+            return self._purpose
+
+        if self.core_brain and hasattr(self.core_brain, 'get_purpose'):
+            try:
+                self._purpose = await self.core_brain.get_purpose()
+                if self._purpose:
+                    logger.info("Loaded Nova's purpose from CoreBrain")
+                    return self._purpose
+            except Exception as e:
+                logger.warning(f"Could not load purpose from CoreBrain: {e}")
+
+        self._purpose = ""   # not available — omit gracefully
+        return self._purpose
+
     async def _build_system_prompt(self, query: str = "") -> str:
         """Build system prompt for agent tasks with Brain context.
 
@@ -1935,8 +1958,10 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
         # Build and cache static part once
         if not self._cached_agent_system_prompt:
             principles_text = await self._get_intelligence_principles()
+            purpose_text = await self._get_purpose()
+            purpose_section = f"\nPURPOSE:\n{purpose_text}\n" if purpose_text else ""
             self._cached_agent_system_prompt = f"""You are {self.bot_name}, an autonomous AI Executive Assistant representing your principal (the user/owner).
-
+{purpose_section}
 {principles_text}
 
 IDENTITY & REPRESENTATION:

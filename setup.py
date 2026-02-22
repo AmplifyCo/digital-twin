@@ -339,11 +339,33 @@ def _create_dirs():
 
 # ── Main wizard ──────────────────────────────────────────────────────
 
+def _check_gitignore():
+    """Verify .env is protected by .gitignore. Warn and offer to fix if not."""
+    gi = Path(".gitignore")
+    if not gi.exists():
+        _warn(".gitignore not found — creating one to protect .env from being committed.")
+        gi.write_text(".env\n*.pem\ndata/\ncredentials/\n__pycache__/\n")
+        _ok(".gitignore created.")
+        return
+
+    contents = gi.read_text()
+    if ".env" not in contents:
+        _warn(".env is NOT in .gitignore — your API keys could be accidentally committed!")
+        fix = _ask("Add .env to .gitignore now? (yes/no)", default="yes")
+        if fix.lower().startswith("y"):
+            gi.write_text(contents.rstrip() + "\n\n# Added by Nova setup wizard\n.env\n")
+            _ok(".env added to .gitignore — your secrets are protected.")
+    # .env is protected — no need to say anything, silent success
+
+
 def main():
     _print_banner()
 
     env_data = {}
     configured = []   # features set up this session
+
+    # Verify .env security before touching anything
+    _check_gitignore()
 
     # Check for existing .env
     if Path(".env").exists():

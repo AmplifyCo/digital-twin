@@ -147,9 +147,11 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             from src.core.brain.core_brain import CoreBrain as CoreBrainClass
             core_brain = CoreBrainClass(config.core_brain_path)
 
-        # Store intelligence principles in CoreBrain (idempotent — uses doc_id)
+        # Store intelligence principles + purpose in CoreBrain (idempotent — uses doc_id)
         logger.info("🧠 Loading intelligence principles into CoreBrain...")
         await core_brain.store_intelligence_principles()
+        logger.info("🎯 Loading Nova's purpose into CoreBrain...")
+        await core_brain.store_purpose()
 
         # Initialize monitoring systems
         logger.info("📊 Initializing monitoring systems...")

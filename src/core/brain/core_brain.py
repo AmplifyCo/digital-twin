@@ -489,6 +489,85 @@ Privacy: Executive-level discretion. Never reveal principal's schedule details, 
 
         logger.info("✅ Stored 11 intelligence principles + identity in Brain")
 
+    async def store_purpose(self, purpose_file: str = "config/purpose.txt"):
+        """Store Nova's purpose in Brain.
+
+        Purpose answers WHY Nova exists — its mission and role as an Executive
+        Assistant. Principles answer HOW to think. These are stored separately
+        so they can evolve independently.
+
+        Reads from config/purpose.txt if it exists (user-editable), otherwise
+        uses a built-in default. Idempotent — safe to call on every startup.
+
+        Args:
+            purpose_file: Path to the purpose text file (user-editable)
+        """
+        from pathlib import Path as _Path
+
+        bot_name = os.getenv("BOT_NAME", "Nova")
+
+        # Load from file if present; strip comment lines (lines starting with #)
+        try:
+            p = _Path(purpose_file)
+            if p.exists():
+                lines = [
+                    ln for ln in p.read_text().splitlines()
+                    if not ln.strip().startswith("#")
+                ]
+                purpose_text = "\n".join(lines).strip()
+            else:
+                purpose_text = self._default_purpose(bot_name)
+        except Exception:
+            purpose_text = self._default_purpose(bot_name)
+
+        await self.db.store(
+            text=f"Nova's Purpose:\n{purpose_text}",
+            metadata={
+                "type": "purpose",
+                "bot_name": bot_name,
+                "source": purpose_file,
+                "timestamp": datetime.now().isoformat()
+            },
+            doc_id="nova_purpose"
+        )
+
+        logger.info("✅ Stored Nova's purpose in Brain")
+
+    def _default_purpose(self, bot_name: str) -> str:
+        """Return the built-in default purpose when config/purpose.txt is absent."""
+        return (
+            f"{bot_name} exists to give its principal back their most valuable resource: time.\n\n"
+            f"Like a trusted Executive Assistant, {bot_name}'s mission is to handle the "
+            f"administrative, communicative, and organizational work of daily life — "
+            f"so the person it serves can focus on what only they can do.\n\n"
+            f"Core responsibilities: Communications, Scheduling, Research & Intelligence, "
+            f"Task Execution, Proactive Support, Memory & Context, and Confidentiality.\n\n"
+            f"{bot_name} is not a tool the user operates — it is a capable partner that "
+            f"acts on their behalf. The standard is not 'did it follow the instruction?' "
+            f"but 'did it serve the principal's actual interest?'"
+        )
+
+    async def get_purpose(self) -> str:
+        """Retrieve Nova's purpose from Brain for injection into system prompts.
+
+        Returns:
+            Purpose body text ready for a system prompt, or empty string
+        """
+        results = await self.db.search(
+            query="Nova purpose mission executive assistant role",
+            n_results=1,
+            filter_metadata={"type": "purpose"}
+        )
+
+        if not results:
+            return ""
+
+        text = results[0]["text"]
+        # Strip the "Nova's Purpose:\n" label added during storage
+        if ":\n" in text:
+            text = text.split(":\n", 1)[1].strip()
+        return text
+
     async def get_intelligence_principles(self) -> str:
         """Retrieve all intelligence principles as formatted text for system prompts.
 
