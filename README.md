@@ -24,19 +24,21 @@ Unlike generic chatbots, Nova builds a memory of who you are. It remembers your 
 - **Shell Commands** — Execute scripts and terminal commands
 - **Memory** — Learns and recalls your preferences, habits, and context
 
+---
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
-- [Anthropic API key](https://console.anthropic.com/)
+- An LLM API key — Nova supports multiple providers (see Configuration)
 - Telegram Bot Token ([create one via BotFather](https://t.me/BotFather))
 
 ### Installation
 
 ```bash
-git clone https://github.com/AmplifyCo/digital-twin.git
-cd digital-twin
+git clone https://github.com/AmplifyCo/project-nova.git
+cd project-nova
 
 python -m venv venv
 source venv/bin/activate
@@ -48,11 +50,15 @@ cp .env.example .env
 
 ### Configuration
 
-Edit `.env` with your credentials:
+Edit `.env` with your credentials. Nova works with any of the supported LLM providers — configure whichever you have access to:
 
 ```bash
-# Required
-ANTHROPIC_API_KEY=your_api_key
+# LLM Provider — configure one or more
+ANTHROPIC_API_KEY=your_anthropic_key        # Claude (claude-sonnet, claude-haiku, ...)
+GEMINI_API_KEY=your_gemini_key              # Gemini (gemini-2.0-flash, gemini-pro, ...)
+OPENAI_API_KEY=your_openai_key              # OpenAI-compatible endpoints
+
+# Telegram (required)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
 
@@ -72,6 +78,8 @@ X_ACCESS_TOKEN=your_x_access_token
 X_ACCESS_TOKEN_SECRET=your_x_access_token_secret
 ```
 
+Nova routes tasks to the best available model automatically — fast models for quick responses, smarter models for complex reasoning — and falls back gracefully when a provider is unavailable.
+
 ### Run
 
 ```bash
@@ -80,6 +88,8 @@ python src/main.py
 
 Nova starts and connects to Telegram. Message your bot to begin.
 
+---
+
 ## Deployment (Amazon Linux / EC2)
 
 ```bash
@@ -87,8 +97,8 @@ Nova starts and connects to Telegram. Message your bot to begin.
 ssh -i your-key.pem ec2-user@your-instance-ip
 
 # Clone, install, configure
-git clone https://github.com/AmplifyCo/digital-twin.git
-cd digital-twin
+git clone https://github.com/AmplifyCo/project-nova.git
+cd project-nova
 chmod +x deploy/ec2/setup.sh
 ./deploy/ec2/setup.sh
 
@@ -110,6 +120,8 @@ pip install playwright
 playwright install --with-deps chromium
 ```
 
+---
+
 ## Adding Talents
 
 Nova's capabilities are modular. Each talent can be enabled independently by adding the required credentials to `.env`. See `config/talents.yaml` for the full list of available and upcoming talents.
@@ -119,11 +131,31 @@ Nova's capabilities are modular. Each talent can be enabled independently by add
 python -m src.setup talents
 ```
 
+---
+
 ## Architecture
 
-Nova is framework-free — pure Python and asyncio with the Anthropic SDK. No LangChain, no LangGraph, no heavyweight frameworks.
+Nova is framework-free — pure Python and asyncio with no heavyweight orchestration frameworks. It is built around three layers:
 
-The system is organized into layers that handle different responsibilities: conversation management, intelligence and memory, execution governance, and modular tool capabilities. It includes background processes for self-monitoring, scheduled tasks, and memory management.
+- **Heart** — the conversation manager that routes intent, selects the right model tier, and dispatches tool calls
+- **Brain** — a set of intelligence principles that govern how Nova thinks and acts (plan before acting, verify before done, minimal impact, etc.)
+- **Memory** — a vector-backed store of your conversations, preferences, and context, used to personalize every response
+
+Background services handle self-monitoring (error detection + auto-fix), scheduled reminders, and periodic memory consolidation.
+
+### Multi-LLM Routing
+
+Nova supports multiple LLM providers through a unified model router. Tasks are matched to models based on latency, capability, and cost requirements:
+
+| Task type | Default model tier |
+|---|---|
+| Fast replies, intent classification | Flash / Haiku class |
+| Tool use, reasoning, code | Sonnet class |
+| Complex research, synthesis | Opus / Pro class |
+
+Configure your preferred providers in `.env`; Nova uses what's available.
+
+---
 
 ## Security
 
@@ -132,6 +164,8 @@ The system is organized into layers that handle different responsibilities: conv
 - Tool execution is governed by risk-based policies
 - Side effects (emails, posts) are deduplicated to prevent double-sends
 - All tool outputs are treated as untrusted data
+
+---
 
 ## License
 
@@ -143,4 +177,4 @@ Nova is an autonomous AI assistant with real-world capabilities (sending emails,
 
 ---
 
-Built with [Claude](https://www.anthropic.com/claude) by Anthropic | Vector memory powered by [ChromaDB](https://www.trychroma.com/)
+Vector memory powered by [LanceDB](https://lancedb.com/)
