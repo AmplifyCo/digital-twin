@@ -3,8 +3,8 @@
 Nova's dashboard handles the callback and saves the token automatically.
 You only need to open the URL in a browser once every ~60 days.
 
-Usage (on EC2 or locally):
-    python scripts/linkedin_auth.py
+Usage (on EC2):
+    /home/ec2-user/digital-twin/venv/bin/python scripts/linkedin_auth.py
 
 Flow:
     1. This script prints an authorization URL
@@ -68,6 +68,9 @@ print("   Nova will automatically save the token to .env.")
 print()
 print("4. Then restart Nova:")
 print("   sudo systemctl restart digital-twin")
+print()
+print("Note: use the venv python on EC2:")
+print("   /home/ec2-user/digital-twin/venv/bin/python scripts/linkedin_auth.py")
 print()
 print("Token expires in ~60 days. Re-run this script to refresh.")
 print("=" * 65)
