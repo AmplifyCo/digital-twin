@@ -41,7 +41,7 @@ if not CLIENT_ID:
 
 BASE_URL = os.getenv("NOVA_BASE_URL", "https://webhook.amplify-pixels.com").rstrip("/")
 REDIRECT_URI = f"{BASE_URL}/linkedin/callback"
-SCOPE = "openid profile w_member_social"
+SCOPE = "w_member_social r_liteprofile"
 
 # ── Build authorization URL ───────────────────────────────────────────────────
 params = urllib.parse.urlencode({

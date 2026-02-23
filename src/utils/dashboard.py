@@ -350,25 +350,35 @@ class Dashboard:
 
                 expires_days = token_data.get("expires_in", 0) // 86400
 
-                # Fetch person URN via OpenID userinfo
+                # Fetch person URN via /v2/me (works with r_liteprofile scope)
+                env_path = _Path(__file__).parent.parent.parent / ".env"
                 async with _aiohttp.ClientSession() as session:
                     async with session.get(
-                        "https://api.linkedin.com/v2/userinfo",
+                        "https://api.linkedin.com/v2/me",
                         headers={"Authorization": f"Bearer {access_token}"},
                         timeout=_aiohttp.ClientTimeout(total=15),
                     ) as resp:
-                        userinfo = await resp.json()
+                        me_data = await resp.json()
 
-                person_id = userinfo.get("sub", "")
+                person_id = me_data.get("id", "")
                 if not person_id:
-                    return _HTML(f"<h2>Could not retrieve person ID</h2><pre>{userinfo}</pre>")
+                    # /v2/me failed — save token and show manual fallback
+                    self._update_env_keys(env_path, {"LINKEDIN_ACCESS_TOKEN": access_token})
+                    return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:540px;margin:60px auto">
+<h2>⚠️ Almost there</h2>
+<p>Access token saved. Could not fetch your person ID automatically.</p>
+<p>Run this on EC2 to get your person ID:</p>
+<pre>curl -H "Authorization: Bearer {access_token}" https://api.linkedin.com/v2/me | python3 -m json.tool</pre>
+<p>Then add to <code>.env</code>: <code>LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID</code></p>
+<p>Then restart: <code>sudo systemctl restart digital-twin</code></p>
+<hr><p><small>API returned: {str(me_data)[:300]}</small></p>
+</body></html>""")
 
+                first = me_data.get("localizedFirstName", "")
+                last = me_data.get("localizedLastName", "")
+                display_name = f"{first} {last}".strip() or "unknown"
                 person_urn = f"urn:li:person:{person_id}"
-                display_name = userinfo.get("name", "unknown")
-                email = userinfo.get("email", "")
 
-                # Write LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN to .env
-                env_path = _Path(__file__).parent.parent.parent / ".env"
                 self._update_env_keys(env_path, {
                     "LINKEDIN_ACCESS_TOKEN": access_token,
                     "LINKEDIN_PERSON_URN": person_urn,
@@ -378,7 +388,7 @@ class Dashboard:
 
                 return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:60px auto">
 <h2>✅ LinkedIn Connected!</h2>
-<p><strong>Authorized as:</strong> {display_name} ({email})</p>
+<p><strong>Authorized as:</strong> {display_name}</p>
 <p><strong>Person URN:</strong> <code>{person_urn}</code></p>
 <p><strong>Token expires in:</strong> {expires_days} days</p>
 <hr>
