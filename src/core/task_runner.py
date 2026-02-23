@@ -32,7 +32,7 @@ class TaskRunner:
     """
 
     CHECK_INTERVAL = 15  # seconds between queue polls
-    MAX_SUBTASK_RETRIES = 2  # retry a failed subtask this many times before skipping
+    MAX_SUBTASK_RETRIES = 3  # Increased retries for robustness
 
     def __init__(
         self,
@@ -152,7 +152,7 @@ class TaskRunner:
             task_prompt += f"\n\nSuggested tools for this step: {', '.join(subtask.tool_hints)}"
 
         # Use 'sonnet' tier for synthesis (last step), 'flash' for everything else
-        model_tier = subtask.model_tier or "flash"
+        model_tier = "sonnet"  # Use better model for all subtasks to reduce failures
 
         for attempt in range(self.MAX_SUBTASK_RETRIES):
             try:
@@ -190,8 +190,8 @@ class TaskRunner:
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
 
-        # WhatsApp notification (if task came from WhatsApp)
-        if task.channel == "whatsapp" and self.whatsapp_channel and task.user_id:
+        # WhatsApp notification (attempt if configured and user_id present, for robustness)
+        if self.whatsapp_channel and task.user_id:
             wa_msg = (
                 f"✅ Done! Here's what I found:\n\n"
                 f"{summary[:600]}\n\n"
@@ -200,7 +200,18 @@ class TaskRunner:
             try:
                 await self.whatsapp_channel.send_message(task.user_id, wa_msg)
             except Exception as e:
-                logger.warning(f"WhatsApp notification failed: {e}")
+                logger.error(f"WhatsApp channel send failed: {e} — falling back to outbound tool")
+                # Fallback to WhatsAppOutboundTool
+                try:
+                    wa_tool = self.agent.tools.get_tool("whatsapp_outbound")
+                    if wa_tool:
+                        await wa_tool.execute(to_number=task.user_id, body=wa_msg)
+                    else:
+                        logger.warning("Outbound tool not available")
+                except Exception as fallback_e:
+                    logger.error(f"WhatsApp fallback failed: {fallback_e}")
+                # Final fallback: notify via Telegram
+                await self.telegram.notify(f"WhatsApp failed for task {task.id}: {str(e)[:100]} — Summary: {summary[:200]}", level="warning")
 
     async def _notify_failure(self, task: Task, error: str):
         """Notify user when a task fails."""
