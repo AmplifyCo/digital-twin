@@ -295,6 +295,102 @@ class Dashboard:
             twiml = await self.twilio_voice_chat.handle_gather(form_data)
             return Response(twiml, media_type="text/xml")
 
+        @app.get("/linkedin/callback")
+        async def linkedin_oauth_callback(request: Request):
+            """Handle LinkedIn OAuth 2.0 callback.
+
+            LinkedIn redirects here after the user authorizes Nova.
+            Exchanges the code for an access token + person URN, then
+            writes both to .env so Nova can post on the next restart.
+            """
+            import os as _os
+            import aiohttp as _aiohttp
+            from pathlib import Path as _Path
+            from fastapi.responses import HTMLResponse as _HTML
+
+            code = request.query_params.get("code", "")
+            error = request.query_params.get("error_description", request.query_params.get("error", ""))
+
+            if error:
+                return _HTML(f"<h2>LinkedIn auth failed</h2><p>{error}</p>")
+            if not code:
+                return _HTML("<h2>No authorization code in callback.</h2>")
+
+            client_id = _os.getenv("LINKEDIN_CLIENT_ID", "")
+            client_secret = _os.getenv("LINKEDIN_CLIENT_SECRET", "")
+            base_url = getattr(self, "_base_url", "").rstrip("/")
+            redirect_uri = f"{base_url}/linkedin/callback"
+
+            if not client_id or not client_secret:
+                return _HTML(
+                    "<h2>Setup incomplete</h2>"
+                    "<p>Add LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET to .env, then retry.</p>"
+                )
+
+            try:
+                # Exchange authorization code for access token
+                async with _aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://www.linkedin.com/oauth/v2/accessToken",
+                        data={
+                            "grant_type": "authorization_code",
+                            "code": code,
+                            "redirect_uri": redirect_uri,
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                        },
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        timeout=_aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        token_data = await resp.json()
+
+                access_token = token_data.get("access_token", "")
+                if not access_token:
+                    return _HTML(f"<h2>Token exchange failed</h2><pre>{token_data}</pre>")
+
+                expires_days = token_data.get("expires_in", 0) // 86400
+
+                # Fetch person URN via OpenID userinfo
+                async with _aiohttp.ClientSession() as session:
+                    async with session.get(
+                        "https://api.linkedin.com/v2/userinfo",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=_aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        userinfo = await resp.json()
+
+                person_id = userinfo.get("sub", "")
+                if not person_id:
+                    return _HTML(f"<h2>Could not retrieve person ID</h2><pre>{userinfo}</pre>")
+
+                person_urn = f"urn:li:person:{person_id}"
+                display_name = userinfo.get("name", "unknown")
+                email = userinfo.get("email", "")
+
+                # Write LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN to .env
+                env_path = _Path(__file__).parent.parent.parent / ".env"
+                self._update_env_keys(env_path, {
+                    "LINKEDIN_ACCESS_TOKEN": access_token,
+                    "LINKEDIN_PERSON_URN": person_urn,
+                })
+
+                logger.info(f"LinkedIn OAuth completed for {display_name} ({person_urn})")
+
+                return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:60px auto">
+<h2>✅ LinkedIn Connected!</h2>
+<p><strong>Authorized as:</strong> {display_name} ({email})</p>
+<p><strong>Person URN:</strong> <code>{person_urn}</code></p>
+<p><strong>Token expires in:</strong> {expires_days} days</p>
+<hr>
+<p>LINKEDIN_ACCESS_TOKEN and LINKEDIN_PERSON_URN saved to <code>.env</code>.</p>
+<p><strong>Restart Nova to activate LinkedIn posting:</strong></p>
+<pre>sudo systemctl restart digital-twin</pre>
+</body></html>""")
+
+            except Exception as e:
+                logger.error(f"LinkedIn OAuth callback error: {e}", exc_info=True)
+                return _HTML(f"<h2>Error during LinkedIn authorization</h2><p>{e}</p>")
+
         # Run server
         config = self.uvicorn.Config(
             app,
@@ -309,6 +405,36 @@ class Dashboard:
         logger.info(f"Twilio WhatsApp webhook: http://{self.host}:{self.port}/twilio/whatsapp")
         logger.info(f"Twilio Voice webhook: http://{self.host}:{self.port}/twilio/voice")
         await server.serve()
+
+    @staticmethod
+    def _update_env_keys(env_path, updates: dict):
+        """Write or update key=value pairs in a .env file.
+
+        Existing keys are updated in-place; new keys are appended.
+        Does not touch any other lines.
+        """
+        from pathlib import Path as _Path
+        env_path = _Path(env_path)
+        existing_lines = env_path.read_text().splitlines() if env_path.exists() else []
+
+        # Build a map of existing key → line index
+        key_to_idx = {}
+        for i, line in enumerate(existing_lines):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                key_to_idx[k] = i
+
+        # Update existing lines or append new ones
+        for key, value in updates.items():
+            new_line = f"{key}={value}"
+            if key in key_to_idx:
+                existing_lines[key_to_idx[key]] = new_line
+            else:
+                existing_lines.append(new_line)
+
+        env_path.write_text("\n".join(existing_lines) + "\n")
+        logger.info(f"Updated .env: {list(updates.keys())}")
 
     def _get_dashboard_html(self) -> str:
         """Generate dashboard HTML.
