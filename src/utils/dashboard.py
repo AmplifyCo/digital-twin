@@ -350,51 +350,58 @@ class Dashboard:
 
                 expires_days = token_data.get("expires_in", 0) // 86400
 
-                # Fetch person URN via /v2/me (works with r_liteprofile scope)
+                # Try to fetch person ID via /v2/me?projection=(id)
+                # w_member_social sometimes allows this minimal call
                 env_path = _Path(__file__).parent.parent.parent / ".env"
-                async with _aiohttp.ClientSession() as session:
-                    async with session.get(
-                        "https://api.linkedin.com/v2/me",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        timeout=_aiohttp.ClientTimeout(total=15),
-                    ) as resp:
-                        me_data = await resp.json()
+                person_id = ""
+                try:
+                    async with _aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://api.linkedin.com/v2/me?projection=(id)",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "X-Restli-Protocol-Version": "2.0.0",
+                            },
+                            timeout=_aiohttp.ClientTimeout(total=15),
+                        ) as resp:
+                            me_data = await resp.json()
+                    person_id = me_data.get("id", "")
+                except Exception:
+                    pass
 
-                person_id = me_data.get("id", "")
-                if not person_id:
-                    # /v2/me failed — save token and show manual fallback
-                    self._update_env_keys(env_path, {"LINKEDIN_ACCESS_TOKEN": access_token})
-                    return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:540px;margin:60px auto">
-<h2>⚠️ Almost there</h2>
-<p>Access token saved. Could not fetch your person ID automatically.</p>
-<p>Run this on EC2 to get your person ID:</p>
-<pre>curl -H "Authorization: Bearer {access_token}" https://api.linkedin.com/v2/me | python3 -m json.tool</pre>
-<p>Then add to <code>.env</code>: <code>LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID</code></p>
-<p>Then restart: <code>sudo systemctl restart digital-twin</code></p>
-<hr><p><small>API returned: {str(me_data)[:300]}</small></p>
-</body></html>""")
-
-                first = me_data.get("localizedFirstName", "")
-                last = me_data.get("localizedLastName", "")
-                display_name = f"{first} {last}".strip() or "unknown"
-                person_urn = f"urn:li:person:{person_id}"
-
-                self._update_env_keys(env_path, {
-                    "LINKEDIN_ACCESS_TOKEN": access_token,
-                    "LINKEDIN_PERSON_URN": person_urn,
-                })
-
-                logger.info(f"LinkedIn OAuth completed for {display_name} ({person_urn})")
-
-                return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:60px auto">
+                if person_id:
+                    person_urn = f"urn:li:person:{person_id}"
+                    self._update_env_keys(env_path, {
+                        "LINKEDIN_ACCESS_TOKEN": access_token,
+                        "LINKEDIN_PERSON_URN": person_urn,
+                    })
+                    logger.info(f"LinkedIn OAuth completed, person URN: {person_urn}")
+                    return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:500px;margin:60px auto">
 <h2>✅ LinkedIn Connected!</h2>
-<p><strong>Authorized as:</strong> {display_name}</p>
 <p><strong>Person URN:</strong> <code>{person_urn}</code></p>
 <p><strong>Token expires in:</strong> {expires_days} days</p>
 <hr>
 <p>LINKEDIN_ACCESS_TOKEN and LINKEDIN_PERSON_URN saved to <code>.env</code>.</p>
-<p><strong>Restart Nova to activate LinkedIn posting:</strong></p>
+<p><strong>Restart Nova:</strong></p>
 <pre>sudo systemctl restart digital-twin</pre>
+</body></html>""")
+                else:
+                    # /v2/me not permitted with w_member_social — save token,
+                    # user must set LINKEDIN_PERSON_URN manually once
+                    self._update_env_keys(env_path, {"LINKEDIN_ACCESS_TOKEN": access_token})
+                    logger.info("LinkedIn token saved; person URN needs manual setup")
+                    return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:540px;margin:60px auto">
+<h2>✅ Token saved — one more step</h2>
+<p>Your access token was saved. LinkedIn requires a separate profile scope
+to fetch your person ID automatically, so you need to set it once manually.</p>
+<p><strong>Run this on EC2 to find your person ID:</strong></p>
+<pre>curl -s -H "Authorization: Bearer {access_token}" \\
+  "https://api.linkedin.com/v2/me?projection=(id)" \\
+  | python3 -m json.tool</pre>
+<p>Copy the <code>id</code> value, then on EC2:</p>
+<pre>echo "LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID" >> /home/ec2-user/digital-twin/.env
+sudo systemctl restart digital-twin</pre>
+<p><small>Token expires in {expires_days} days.</small></p>
 </body></html>""")
 
             except Exception as e:
