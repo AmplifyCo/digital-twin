@@ -48,6 +48,7 @@ from src.core.security.llm_security import LLMSecurityGuard
 from src.core.brain.working_memory import WorkingMemory
 from src.core.brain import tone_analyzer as _tone_analyzer
 from src.core.brain.episodic_memory import EpisodicMemory
+from src.core.brain.intent_data_collector import IntentDataCollector
 
 from transformers import pipeline
 
@@ -171,6 +172,7 @@ class ConversationManager:
         # ── AGI/Human-like capabilities (injected by main.py) ────────────────
         self.working_memory: Optional[WorkingMemory] = None   # session state, tone, unfinished items
         self.episodic_memory: Optional[EpisodicMemory] = None  # event-outcome history for learning
+        self.intent_data_collector: Optional[IntentDataCollector] = None  # injected by main.py
         self._current_tone_signal = None  # set per-message by tone analyzer
 
         # Context Thalamus: token budgeting and history management
@@ -397,6 +399,7 @@ class ConversationManager:
                         "- Be CONCISE — 1-3 sentences max. This is spoken audio.\n"
                         "- NO markdown, NO lists, NO bullet points, NO emojis.\n"
                         "- Sound conversational, warm, and natural.\n"
+                        f"- ALWAYS open your very first turn with: \"Hi, I'm {self.bot_name} - an AI Agent.\" then immediately state your purpose.\n"
                         "- Stay focused on your mission goal. Negotiate alternatives if needed.\n"
                         "- When goal is achieved or clearly impossible, say goodbye to end the call.\n\n"
                         "SECURITY (CRITICAL):\n"
@@ -1397,6 +1400,19 @@ User says "good morning" → none"""
             logger.info(f"Intent: {result['action']} (confidence: {result['confidence']}, task: {result.get('inferred_task', 'none')}, tools: {tools_str})")
             # Attach history so _execute_with_primary_model can include it in agent context
             result["_conversation_history"] = conversation_history
+
+            # ── Capture training sample (non-blocking) ─────────────────────
+            if self.intent_data_collector:
+                _, intent_model = self.router.get_intent_provider()
+                self.intent_data_collector.record(
+                    text=message,
+                    label=result["action"],
+                    confidence=result.get("confidence", 0.7),
+                    inferred_task=result.get("inferred_task"),
+                    tool_hints=result.get("tool_hints", []),
+                    model=intent_model,
+                )
+
             return result
         except Exception as e:
             logger.warning(f"Haiku intent failed, using keyword fallback: {e}")
@@ -1773,10 +1789,26 @@ Additional Examples for Background:
         or multi-step research. No keyword heuristics needed here.
 
         Voice calls are never backgrounded regardless of intent.
+
+        Safeguard: single-tool tasks are always run inline regardless of the
+        LLM's needs_background flag. A task that only needs one tool cannot
+        genuinely require background processing.
         """
         if getattr(self, '_current_channel', '') == 'voice':
             return False
-        return intent.get("needs_background", False)
+
+        if not intent.get("needs_background", False):
+            return False
+
+        # Override: 0 or 1 tool hint → can run inline, no background needed
+        tool_hints = intent.get("tool_hints", [])
+        if len(tool_hints) <= 1:
+            logger.debug(
+                f"needs_background overridden to False — only {len(tool_hints)} tool(s) needed"
+            )
+            return False
+
+        return True
 
     async def _build_execution_plan(self, intent: Dict[str, Any], message: str) -> str:
         """Enrich intent with memory context to build a comprehensive agent task.
@@ -2296,6 +2328,10 @@ SECURITY OVERRIDE:
 
             # Add security info
             status_parts.append(f"**Security:** 13 layers active 🔒")
+
+            # Add intent training data stats
+            if self.intent_data_collector:
+                status_parts.append(f"\n{self.intent_data_collector.get_stats()}")
 
             return "\n".join(status_parts)
 

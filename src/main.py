@@ -24,6 +24,7 @@ from src.core.goal_decomposer import GoalDecomposer
 from src.core.task_runner import TaskRunner
 from src.core.brain.working_memory import WorkingMemory
 from src.core.brain.episodic_memory import EpisodicMemory
+from src.core.brain.intent_data_collector import IntentDataCollector
 from src.core.brain.attention_engine import AttentionEngine
 from src.integrations.anthropic_client import AnthropicClient
 from src.integrations.model_router import ModelRouter
@@ -400,7 +401,12 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             episodic_memory = EpisodicMemory(path="./data/episodic_memory")
             conversation_manager.working_memory = working_memory
             conversation_manager.episodic_memory = episodic_memory
-            logger.info("🧠 WorkingMemory + EpisodicMemory wired into ConversationManager")
+            intent_data_collector = IntentDataCollector(
+                output_path="./data/intent_training/samples.jsonl",
+                golden_path="./data/golden_intents.json",
+            )
+            conversation_manager.intent_data_collector = intent_data_collector
+            logger.info("🧠 WorkingMemory + EpisodicMemory + IntentDataCollector wired into ConversationManager")
 
             logger.info("✅ Autonomy stack initialized")
 

@@ -194,7 +194,7 @@ class TwilioVoiceChannel:
         logger.info(f"📞 {direction.title()} voice call with {user_number} (CallSid: {call_sid})")
 
         bot_name = os.getenv("BOT_NAME", "Nova")
-        return await self._generate_twiml(text=f"Hi, I am {bot_name}. How can I help you?", prompt_for_input=True)
+        return await self._generate_twiml(text=f"Hi, I'm {bot_name} - an AI Agent. How can I help you?", prompt_for_input=True)
 
     async def handle_gather(self, form_data: Dict[str, str]) -> str:
         """Handle speech recognition result webhook (/twilio/voice/gather).

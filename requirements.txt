@@ -33,6 +33,8 @@ aiohttp>=3.9.0
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
 requests>=2.31.0
+tavily-python>=0.3.0       # AI-optimised search API (set TAVILY_API_KEY in .env)
+duckduckgo-search>=6.0.0   # No-key fallback (may be rate-limited on cloud IPs)
 
 # Utilities
 pydantic>=2.5.3

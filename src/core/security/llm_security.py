@@ -445,7 +445,9 @@ Keep your response to just one word: VALID or INVALID"""
             'IP': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
             'SSN': r'\b\d{3}-\d{2}-\d{4}\b',
             'CREDIT_CARD': r'\b(?:\d{4}[-\s]?){3}\d{4}\b',
-            # Add more as needed
+            # Financial identifiers (RISK-P02)
+            'IBAN': r'\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:[A-Z0-9]{0,16})\b',
+            'ROUTING_NUMBER': r'\b(?:routing\s+(?:number\s+)?#?\s*)(\d{9})\b',
         }
         
         for pii_type, pattern in patterns.items():

@@ -131,6 +131,17 @@ class SelfHealingMonitor:
         for error in errors:
             self.total_fixes_attempted += 1
 
+            # Notify BEFORE applying the fix (RISK-O04 — pre-deploy transparency)
+            if self.telegram:
+                pre_fix_msg = (
+                    f"🔧 **Auto-fix starting**\n\n"
+                    f"**Error:** {error.error_type.value}\n"
+                    f"**Severity:** {error.severity.value}\n"
+                    f"**Details:** {error.message[:120]}\n\n"
+                    f"Applying fix now — you'll see the result shortly."
+                )
+                await self.telegram.notify(pre_fix_msg)
+
             result = await self.fixer.attempt_fix(error)
 
             if result.success:

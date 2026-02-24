@@ -326,12 +326,100 @@ class DigitalCloneBrain:
     # ISOLATED CONTEXT — Conversation Storage
     # ================================================================
 
+    # Channels whose messages originate from third parties (not the owner)
+    THIRD_PARTY_CHANNELS = {"email"}
+
+    # Off-limits data categories (RISK-P02, RISK-P03) — sentence-level filter
+    _FINANCIAL_KEYWORDS = {
+        "bank account", "account number", "routing number", "iban", "swift code",
+        "sort code", "wire transfer", "account balance", "bank statement",
+        "credit score", "tax return", "bsb number", "ach number",
+    }
+    _HEALTH_KEYWORDS = {
+        "diagnosis", "prescription", "medication", "dosage", "symptom",
+        "medical record", "medical history", "blood pressure", "blood sugar",
+        "test result", "lab result", "health condition", "chronic condition",
+        "therapy session", "psychiatrist", "psychologist", "surgery",
+        "treatment plan", "clinical", "biopsy", "mri", "ecg",
+    }
+
+    @classmethod
+    def _filter_sensitive_categories(cls, text: str) -> tuple:
+        """Remove sentences containing financial or health data from stored content.
+
+        Operates at sentence level: any sentence containing a sensitive keyword
+        is replaced with a redaction marker. Returns the filtered text and a
+        flag indicating whether anything was removed.
+
+        Returns:
+            (filtered_text, was_filtered)
+        """
+        import re
+        sentences = re.split(r'(?<=[.!?\n])\s+', text)
+        filtered_sentences = []
+        was_filtered = False
+
+        all_sensitive = cls._FINANCIAL_KEYWORDS | cls._HEALTH_KEYWORDS
+
+        for sentence in sentences:
+            lower = sentence.lower()
+            if any(kw in lower for kw in all_sensitive):
+                filtered_sentences.append("[sensitive content removed — financial/health policy]")
+                was_filtered = True
+            else:
+                filtered_sentences.append(sentence)
+
+        return " ".join(filtered_sentences), was_filtered
+
+    async def _summarize_third_party_content(
+        self, text: str, gemini_client=None, channel: str = "unknown"
+    ) -> str:
+        """Summarize third-party message content for privacy-safe storage.
+
+        Uses Gemini Flash (fast, low-token) to produce a 2-3 sentence
+        informational summary capturing sender, topic, and action items —
+        without storing raw third-party content verbatim (RISK-P01).
+
+        Falls back to a 400-char head excerpt if Gemini is unavailable.
+        """
+        if gemini_client is None or not getattr(gemini_client, "enabled", False):
+            excerpt = text[:400].rsplit(" ", 1)[0] if len(text) > 400 else text
+            return excerpt + " [content not fully stored — summarizer unavailable]"
+
+        prompt = (
+            f"Summarize the following {channel} message in 2-3 sentences. "
+            "Capture: who it's from (if mentioned), the main topic or request, "
+            "and any action items or key facts. Do not reproduce personal details "
+            "like phone numbers, addresses, or financial data verbatim.\n\n"
+            f"Message:\n{text[:3000]}"
+        )
+        try:
+            response = await gemini_client.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=256,
+            )
+            # Extract text from Gemini response (same pattern as GoalDecomposer)
+            if hasattr(response, "content") and response.content:
+                summary = response.content[0].text
+            elif hasattr(response, "choices") and response.choices:
+                summary = response.choices[0].message.content
+            else:
+                summary = str(response)
+            return summary.strip()
+        except Exception as e:
+            logger.warning(f"Third-party summarization failed: {e} — falling back to excerpt")
+            excerpt = text[:400].rsplit(" ", 1)[0] if len(text) > 400 else text
+            return excerpt + " [summarization failed — stored as excerpt]"
+
     async def store_conversation_turn(
         self,
         user_message: str,
         assistant_response: str,
         model_used: str,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        is_third_party: bool = False,
+        gemini_client=None,
     ):
         """Store a conversation turn in the correct isolated context.
 
@@ -339,25 +427,50 @@ class DigitalCloneBrain:
         gets this memory. Email conversations stay in email context,
         Telegram chats stay in Telegram context, etc.
 
+        For third-party channels (email, untrusted voice), `is_third_party`
+        should be True. The raw user_message is summarised via Gemini Flash
+        before storage (RISK-P01). Financial and health data are redacted
+        sentence-by-sentence regardless of channel (RISK-P02, RISK-P03).
+
         Args:
-            user_message: User's message
+            user_message: User's / third-party's message
             assistant_response: Assistant's response
             model_used: Which model generated the response
             metadata: Must include 'channel' for context isolation
+            is_third_party: True for email / untrusted-inbound content
+            gemini_client: Gemini Flash client for summarisation
         """
         metadata = metadata or {}
         channel = metadata.get("channel", "unknown")
         talent = self._resolve_talent(channel=channel)
 
-        conversation_text = f"""User: {user_message}
+        # Apply third-party content policy — summarize via Gemini Flash (RISK-P01)
+        if is_third_party or channel in self.THIRD_PARTY_CHANNELS:
+            stored_message = await self._summarize_third_party_content(
+                user_message, gemini_client=gemini_client, channel=channel
+            )
+            content_policy = "third_party_summarized"
+            logger.debug(f"Third-party content summarized for storage (channel={channel})")
+        else:
+            stored_message = user_message
+            content_policy = "full"
+
+        # Apply sensitive-category filter to ALL stored content (RISK-P02, RISK-P03)
+        stored_message, was_filtered = self._filter_sensitive_categories(stored_message)
+        if was_filtered:
+            content_policy += "+sensitive_filtered"
+            logger.debug("Sensitive category content removed before storage")
+
+        conversation_text = f"""User: {stored_message}
 Assistant ({model_used}): {assistant_response}"""
 
         store_metadata = {
             "type": "conversation",
             "model_used": model_used,
             "timestamp": datetime.now().isoformat(),
-            "user_message": user_message,
+            "user_message": stored_message,
             "assistant_response": assistant_response,
+            "content_policy": content_policy,
             "talent": talent or "unknown",
             **metadata
         }

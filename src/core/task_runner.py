@@ -78,6 +78,18 @@ class TaskRunner:
         self._current_task_id = task.id
         logger.info(f"TaskRunner picked up task {task.id}: {task.goal[:60]}")
 
+        # Notify owner on Telegram that the task has started (RISK-O06 — SM-06 gap)
+        try:
+            start_msg = (
+                f"🚀 *Background task started*\n\n"
+                f"*Goal:* {task.goal[:150]}\n"
+                f"*Task ID:* `{task.id}`\n\n"
+                f"I'll update you when it's done or if anything unexpected happens."
+            )
+            await self.telegram.notify(start_msg, level="info")
+        except Exception as e:
+            logger.warning(f"Task-started notification failed: {e}")
+
         try:
             # Step 1: Decompose into subtasks
             available_tools = list(self.agent.tools.tools.keys()) if hasattr(self.agent, 'tools') else []
@@ -193,53 +205,72 @@ class TaskRunner:
         except Exception as e:
             logger.warning(f"Telegram progress failed: {e}")
 
-        # WhatsApp (if configured)
+        # WhatsApp (if configured) — send_message() is sync, run in thread
         if self.whatsapp_channel and task.user_id:
             try:
-                await self.whatsapp_channel.send_message(task.user_id, prog_msg)
+                await asyncio.to_thread(
+                    self.whatsapp_channel.send_message, task.user_id, prog_msg
+                )
             except Exception as e:
                 logger.warning(f"WhatsApp progress failed: {e}")
 
     async def _notify_user(self, task: Task, summary: str):
-        """Notify user via Telegram + WhatsApp when a task completes."""
-        file_path = f"./data/tasks/{task.id}.txt"
+        """Notify user via Telegram when a task completes.
 
-        # Telegram notification (always)
-        tg_msg = (
-            f"✅ *Background task complete*\n\n"
-            f"*Goal:* {task.goal[:100]}\n\n"
-            f"{summary[:400]}\n\n"
-            f"📄 Full report: `{file_path}`"
-        )
+        Reads the full report file and sends it in chunks so the user
+        receives the complete content in Telegram — not just a file path
+        that is inaccessible outside EC2.
+        """
+        file_path = Path(f"./data/tasks/{task.id}.txt")
+
+        # Read full file content; fall back to the in-memory summary
+        full_content = summary
         try:
-            await self.telegram.notify(tg_msg, level="info")
+            if file_path.exists():
+                full_content = file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not read task file {file_path}: {e}")
+
+        header = (
+            f"✅ *Background task complete*\n\n"
+            f"*Goal:* {task.goal[:150]}\n\n"
+        )
+
+        # Send full content via Telegram in chunks (Telegram limit: 4096 chars)
+        try:
+            await self._send_chunked_telegram(header, full_content)
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
 
-        # WhatsApp notification (always attempt if configured)
+        # WhatsApp notification — send_message() is sync, run in thread
         if self.whatsapp_channel and task.user_id:
-            wa_msg = (
-                f"✅ Done! Here's what I found:\n\n"
-                f"{summary[:600]}\n\n"
-                f"Full report saved to: {file_path}"
-            )
+            wa_msg = f"✅ Done!\n\n{full_content[:1200]}"
             try:
-                await self.whatsapp_channel.send_message(task.user_id, wa_msg)
+                await asyncio.to_thread(
+                    self.whatsapp_channel.send_message, task.user_id, wa_msg
+                )
             except Exception as e:
-                logger.error(f"WhatsApp channel send failed: {e} — falling back to outbound tool")
-                # Fallback to WhatsAppOutboundTool
-                try:
-                    wa_tool = self.agent.tools.get_tool("whatsapp_outbound")
-                    if wa_tool:
-                        await wa_tool.execute(to_number=task.user_id, body=wa_msg)
-                    else:
-                        logger.warning("Outbound tool not available")
-                except Exception as fallback_e:
-                    logger.error(f"WhatsApp fallback failed: {fallback_e}")
-                # Final fallback: notify via Telegram
-                await self.telegram.notify(f"WhatsApp failed for task {task.id}: {str(e)[:100]} — Summary: {summary[:200]}", level="warning")
+                logger.warning(f"WhatsApp notification failed: {e}")
         elif not self.whatsapp_channel:
             logger.debug("WhatsApp channel not configured, skipping WhatsApp notification")
+
+    async def _send_chunked_telegram(self, header: str, content: str):
+        """Send a potentially long message to Telegram in 3800-char chunks.
+
+        First chunk includes the header. Subsequent chunks are labeled
+        (continued N) so the user can follow the sequence.
+        """
+        CHUNK = 3800
+        first_body = content[: CHUNK - len(header)]
+        await self.telegram.notify(header + first_body, level="info")
+
+        remaining = content[CHUNK - len(header) :]
+        part = 2
+        while remaining:
+            chunk_text = f"*(continued {part})*\n\n" + remaining[:CHUNK]
+            await self.telegram.notify(chunk_text, level="info")
+            remaining = remaining[CHUNK:]
+            part += 1
 
     async def _notify_failure(self, task: Task, error: str):
         """Notify user when a task fails on both Telegram and WhatsApp."""
@@ -256,7 +287,8 @@ class TaskRunner:
 
         if self.whatsapp_channel and task.user_id:
             try:
-                await self.whatsapp_channel.send_message(
+                await asyncio.to_thread(
+                    self.whatsapp_channel.send_message,
                     task.user_id,
                     f"Sorry, I wasn't able to complete that task. Error: {error[:100]}"
                 )

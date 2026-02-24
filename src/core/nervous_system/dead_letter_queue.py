@@ -23,16 +23,18 @@ class DeadLetterQueue:
 
     MAX_DLQ_SIZE = 100  # Keep last N items, oldest dropped
 
-    def __init__(self, data_dir: str = "./data"):
+    def __init__(self, data_dir: str = "./data", telegram_notifier=None):
         """Initialize DLQ.
 
         Args:
             data_dir: Directory for persistent storage
+            telegram_notifier: Optional notifier; sends alert when an item is dead-lettered
         """
         self.data_dir = Path(data_dir)
         self.dlq_file = self.data_dir / "dead_letter_queue.json"
         self._failure_counts: Dict[str, int] = {}  # key → consecutive failure count
         self.max_retries = 3  # failures before moving to DLQ
+        self.telegram = telegram_notifier
 
     def record_failure(
         self,
@@ -90,6 +92,28 @@ class DeadLetterQueue:
 
         self._save(items)
         logger.warning(f"Dead-lettered after {failure_count} failures: {key} — {error}")
+
+        # Alert owner via Telegram (SM-05 gap — RISK-O06)
+        if self.telegram:
+            import asyncio
+            short_key = key[:80]
+            short_error = error[:120]
+            msg = (
+                f"⚠️ *Dead Letter Queue alert*\n\n"
+                f"A task was abandoned after {failure_count} failed attempts.\n\n"
+                f"*Key:* `{short_key}`\n"
+                f"*Error:* {short_error}\n\n"
+                f"Check the DLQ to retry or discard it."
+            )
+            # Notify is async; schedule it safely whether we're in an event loop or not
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(self.telegram.notify(msg, level="warning"))
+                else:
+                    loop.run_until_complete(self.telegram.notify(msg, level="warning"))
+            except Exception as notify_err:
+                logger.warning(f"DLQ Telegram alert failed: {notify_err}")
 
     def get_items(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent DLQ items."""

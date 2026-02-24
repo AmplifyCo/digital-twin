@@ -41,14 +41,15 @@ class ExecutionGovernor:
         governor.outbox.mark_sent(key)
     """
 
-    def __init__(self, data_dir: str = "./data"):
+    def __init__(self, data_dir: str = "./data", telegram_notifier=None):
         """Initialize all Nervous System components.
 
         Args:
             data_dir: Directory for persistent storage (DLQ, outbox)
+            telegram_notifier: Optional notifier forwarded to DLQ for dead-letter alerts
         """
         self.policy_gate = PolicyGate()
-        self.dlq = DeadLetterQueue(data_dir=data_dir)
+        self.dlq = DeadLetterQueue(data_dir=data_dir, telegram_notifier=telegram_notifier)
         self.outbox = DurableOutbox(data_dir=data_dir)
         self.state_machine = AgentStateMachine()
 
