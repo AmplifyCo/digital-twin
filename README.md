@@ -113,7 +113,7 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 │  ReminderScheduler   · 30s   · fire due reminders      │
 │  TaskRunner          · 15s   · autonomous multi-step   │
 │  AttentionEngine     · 6h    · purpose-driven proactivity (NovaPurpose) │
-│  SelfHealingMonitor  · 5min  · detect + fix; reports diffs via Telegram │
+│  SelfHealingMonitor  · 12h   · detect + fix; reports diffs via Telegram │
 │  MemoryConsolidator  · 6h    · prune stale turns       │
 │  DailyDigest         · 9am   · activity summary to Telegram │
 │  MemoryBackup        · daily · LanceDB snapshot to disk │
@@ -421,7 +421,7 @@ digital-twin/
 │   │   │   ├── dead_letter_queue.py       # Poison event handling + Telegram alerts
 │   │   │   └── state_machine.py           # Agent execution states
 │   │   ├── self_healing/
-│   │   │   ├── monitor.py                 # Error detection + healing loop (5min)
+│   │   │   ├── monitor.py                 # Error detection + healing loop (12h)
 │   │   │   ├── auto_fixer.py              # LLM-generated patches; reports via Telegram
 │   │   │   ├── capability_fixer.py        # Learns new tool capabilities on failure
 │   │   │   ├── error_detector.py          # Pattern-based error classification
