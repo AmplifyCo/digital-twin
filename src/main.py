@@ -476,6 +476,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         # Register Nova API key for iOS Shortcut endpoint
         if config.nova_api_key and dashboard.enabled:
             dashboard.set_nova_api_key(config.nova_api_key)
+        if dashboard.enabled and telegram.enabled:
+            dashboard.set_telegram_notifier(telegram)
 
         # Start dashboard server (non-blocking)
         dashboard_task = None

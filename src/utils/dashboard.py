@@ -150,6 +150,9 @@ class Dashboard:
         self.telegram_chat = telegram_chat
         logger.info("Telegram chat handler registered with dashboard")
 
+    def set_telegram_notifier(self, notifier):
+        self._telegram_notifier = notifier
+
     def set_twilio_whatsapp_chat(self, twilio_whatsapp_chat):
         self.twilio_whatsapp_chat = twilio_whatsapp_chat
         logger.info("Twilio WhatsApp chat handler registered with dashboard")
@@ -451,10 +454,20 @@ class Dashboard:
                 return self.JSONResponse({"error": "Not ready yet"}, status_code=503)
 
             try:
+                # Progress callback — sends friendly Telegram updates while Nova works
+                _tg = getattr(self, "_telegram_notifier", None)
+                async def _shortcut_progress(update: str):
+                    try:
+                        await _tg.notify(update, level="info")
+                    except Exception:
+                        pass
+
                 response = await self._conversation_manager.process_message(
                     message=message,
                     channel="shortcut",
                     user_id="owner",
+                    progress_callback=_shortcut_progress if _tg else None,
+                    enable_periodic_updates=bool(_tg),
                 )
                 return self.JSONResponse({"response": response})
             except Exception as e:

@@ -845,9 +845,11 @@ class ConversationManager:
         # ── BACKGROUND TASK ROUTING ──────────────────────────────────────────
         # Detect complex/research tasks and route to background queue instead of
         # running inline. This prevents hallucination and enables multi-step work.
-        if self.task_queue and self._is_background_task(message, intent):
+        # Shortcut channel always executes inline — no background queuing.
+        _channel_now = getattr(self, '_current_channel', 'telegram') or 'telegram'
+        if self.task_queue and self._is_background_task(message, intent) and _channel_now != "shortcut":
             goal = inferred_task or message
-            channel = getattr(self, '_current_channel', 'telegram') or 'telegram'
+            channel = _channel_now
             user_id = getattr(self, '_current_user_id', '') or ''
             # Use raw_contact (actual phone number) as notification address when available,
             # so WhatsApp task completion notifications route correctly.
