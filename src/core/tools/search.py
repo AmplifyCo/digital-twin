@@ -18,7 +18,8 @@ from ..types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-_TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+def _get_tavily_key() -> str:
+    return os.getenv("TAVILY_API_KEY", "")
 
 
 class WebSearchTool(BaseTool):
@@ -49,9 +50,10 @@ class WebSearchTool(BaseTool):
         max_results = min(int(max_results), 10)
 
         # Primary: Tavily (reliable on cloud IPs, better structured results)
-        if _TAVILY_API_KEY:
+        if _get_tavily_key():
             result = await self._search_tavily(query, max_results)
             if result.success:
+                logger.info("Tavily search succeeded")
                 return result
             logger.warning(f"Tavily search failed, falling back to DuckDuckGo: {result.error}")
 
@@ -63,7 +65,7 @@ class WebSearchTool(BaseTool):
         try:
             from tavily import TavilyClient
 
-            client = TavilyClient(api_key=_TAVILY_API_KEY)
+            client = TavilyClient(api_key=_get_tavily_key())
             # TavilyClient is sync; run in thread so we don't block the event loop
             response = await asyncio.to_thread(
                 client.search,
