@@ -819,15 +819,39 @@ class AutoFixer:
         return "SAFE", "Passed checks"
 
     async def _report_fix_locally(self, error, diff: str, applied: bool = False):
-        """Report a detected fix to the owner via Telegram — no git operations."""
-        summary = diff[:800] if diff else "(no diff generated)"
+        """Report a detected fix via Telegram and save full diff to data/fixes/."""
         status = "Applied locally" if applied else "Not applied (security risk)"
+        summary = diff[:800] if diff else "(no diff generated)"
+
+        # ── Save full diff to disk ─────────────────────────────────────
+        try:
+            from pathlib import Path as _Path
+            fixes_dir = _Path("data/fixes")
+            fixes_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fix_file = fixes_dir / f"{ts}_{error.error_type.value}.diff"
+            fix_file.write_text(
+                f"# Self-Healing Fix Log\n"
+                f"# Timestamp: {datetime.now().isoformat()}\n"
+                f"# Error type: {error.error_type.value}\n"
+                f"# Error message: {str(error.message)}\n"
+                f"# Status: {status}\n\n"
+                + (diff or "(no diff generated)")
+            )
+            log_path = str(fix_file)
+            logger.info(f"Fix diff saved to {log_path}")
+        except Exception as e:
+            logger.warning(f"Could not save fix log: {e}")
+            log_path = "data/fixes/ (save failed)"
+
+        # ── Notify via Telegram ────────────────────────────────────────
         msg = (
             f"🔧 *Self-Healing: Fix {'Applied' if applied else 'Identified (not applied)'}*\n\n"
             f"*Error type:* {error.error_type.value}\n"
             f"*Message:* {str(error.message)[:200]}\n"
-            f"*Status:* {status}\n\n"
-            f"*Suggested diff:*\n```\n{summary}\n```\n\n"
+            f"*Status:* {status}\n"
+            f"*Log:* `{log_path}`\n\n"
+            f"*Diff preview:*\n```\n{summary}\n```\n\n"
             f"{'Fix was applied automatically.' if applied else 'Review and apply manually if appropriate.'}"
         )
         if self.telegram:
