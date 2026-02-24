@@ -31,6 +31,7 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
     local_model_config = yaml_config.get("local_model", {})
 
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    grok_api_key = os.getenv("GROK_API_KEY", "")
 
     config = AgentConfig(
         # API - Multi-tier model configuration
@@ -43,6 +44,15 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
         # Gemini (optional — intent + simple chat via LiteLLM)
         gemini_model=os.getenv("GEMINI_MODEL", yaml_config.get("agent", {}).get("models", {}).get("gemini_flash", "gemini/gemini-2.0-flash")),
         gemini_enabled=bool(gemini_api_key),
+
+        # Grok (optional, via LiteLLM — fallback)
+        grok_enabled=bool(grok_api_key),
+        grok_models=yaml_config.get("agent", {}).get("models", {}).get("grok", {}) or {
+            "flash": os.getenv("GROK_FLASH_MODEL", "xai/grok-beta"),
+            "haiku": os.getenv("GROK_HAIKU_MODEL", "xai/grok-1"),
+            "sonnet": os.getenv("GROK_SONNET_MODEL", "xai/grok-advanced"),
+            "quality": os.getenv("GROK_QUALITY_MODEL", "xai/grok-4.1")
+        },
 
         # Local Models (optional)
         local_model_enabled=os.getenv("LOCAL_MODEL_ENABLED", str(local_model_config.get("enabled", False))).lower() == "true",
@@ -104,7 +114,7 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
 
     # Validate required fields
     # Validate required fields
-    if not config.api_key and not config.gemini_enabled:
-        raise ValueError("At least one API key (ANTHROPIC_API_KEY or GEMINI_API_KEY) is required")
+    if not config.api_key and not config.gemini_enabled and not config.grok_enabled:
+        raise ValueError("At least one API key (ANTHROPIC_API_KEY or GEMINI_API_KEY or GROK_API_KEY) is required")
 
     return config

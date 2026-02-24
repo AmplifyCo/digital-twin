@@ -22,13 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 class AutonomousAgent:
+    # ── Model tier constants (LiteLLM model strings) ────────────────
+    MODEL_GEMINI_FLASH = "gemini/gemini-2.0-flash"
+    MODEL_GEMINI_PRO = "gemini/gemini-2.5-pro"
+    MODEL_CLAUDE_SONNET = "anthropic/claude-sonnet-4-5"
+    MODEL_CLAUDE_HAIKU = "anthropic/claude-haiku-4-5"
     """Main autonomous agent with self-contained execution loop."""
 
     def __init__(
         self,
         config: AgentConfig,
         brain: Union[CoreBrain, DigitalCloneBrain] = None,
-        gemini_client=None
+        gemini_client=None,
+        grok_client=None
     ):
         """Initialize the autonomous agent.
 
@@ -40,6 +46,7 @@ class AutonomousAgent:
         self.config = config
         self.api_client = AnthropicClient(config.api_key)
         self.gemini_client = gemini_client
+        self.grok_client = grok_client
 
         # Load YAML config for tool registry
         yaml_config = {}
@@ -60,6 +67,7 @@ class AutonomousAgent:
         # Temporarily paused as per user request
         # self.auto_fixer = AutoFixer(llm_client=self.gemini_client or self.api_client)
         fallback = "+ Gemini fallback" if gemini_client else ""
+        fallback += " + Grok fallback" if grok_client else ""
         logger.info(f"Initialized AutonomousAgent with {config.default_model} {fallback}")
 
     async def run(
@@ -274,8 +282,20 @@ class AutonomousAgent:
                         system=system_prompt, max_tokens=max_tokens
                     )
                 except Exception as claude_err:
-                    logger.error(f"Claude Sonnet also failed: {claude_err}")
-                    raise e
+                    if self.grok_client and self.config.grok_enabled:
+                        logger.warning(f"Claude Sonnet failed ({str(claude_err)[:60]}), falling back to Grok...")
+                        try:
+                            return await self.grok_client.create_message(
+                                model=self.config.grok_models["flash"],
+                                messages=messages, tools=tools,
+                                system=system_prompt, max_tokens=max_tokens
+                            )
+                        except Exception as grok_err:
+                            logger.error(f"Grok also failed: {grok_err}")
+                            raise claude_err
+                    else:
+                        logger.error(f"Claude Sonnet failed: {claude_err}")
+                        raise claude_err
 
         elif model_tier == "haiku":
             # ── Gemini Flash primary → Claude Haiku fallback ──
@@ -295,8 +315,20 @@ class AutonomousAgent:
                         system=system_prompt, max_tokens=max_tokens
                     )
                 except Exception as claude_err:
-                    logger.error(f"Claude Haiku also failed: {claude_err}")
-                    raise e
+                    if self.grok_client and self.config.grok_enabled:
+                        logger.warning(f"Claude Haiku failed ({str(claude_err)[:60]}), falling back to Grok...")
+                        try:
+                            return await self.grok_client.create_message(
+                                model=self.config.grok_models["haiku"],
+                                messages=messages, tools=tools,
+                                system=system_prompt, max_tokens=max_tokens
+                            )
+                        except Exception as grok_err:
+                            logger.error(f"Grok also failed: {grok_err}")
+                            raise claude_err
+                    else:
+                        logger.error(f"Claude Haiku failed: {claude_err}")
+                        raise claude_err
 
         elif model_tier == "quality":
             # ── Claude Sonnet primary → retry on 429 → Gemini Pro fallback ──
@@ -323,8 +355,20 @@ class AutonomousAgent:
                             system=system_prompt, max_tokens=max_tokens
                         )
                     except Exception as pro_error:
-                        logger.error(f"Gemini Pro also failed: {pro_error}")
-                        raise e
+                        if self.grok_client and self.config.grok_enabled:
+                            logger.warning(f"Gemini Pro failed ({str(pro_error)[:60]}), falling back to Grok...")
+                            try:
+                                return await self.grok_client.create_message(
+                                    model=self.config.grok_models["quality"],
+                                    messages=messages, tools=tools,
+                                    system=system_prompt, max_tokens=max_tokens
+                                )
+                            except Exception as grok_err:
+                                logger.error(f"Grok also failed: {grok_err}")
+                                raise pro_error
+                        else:
+                            logger.error(f"Gemini Pro failed: {pro_error}")
+                            raise pro_error
 
         else:
             # ── Standard/Sonnet: Gemini Flash primary → Claude Sonnet fallback ──
@@ -344,8 +388,20 @@ class AutonomousAgent:
                         system=system_prompt, max_tokens=max_tokens
                     )
                 except Exception as claude_err:
-                    logger.error(f"Claude Sonnet also failed: {claude_err}")
-                    raise e
+                    if self.grok_client and self.config.grok_enabled:
+                        logger.warning(f"Claude Sonnet failed ({str(claude_err)[:60]}), falling back to Grok...")
+                        try:
+                            return await self.grok_client.create_message(
+                                model=self.config.grok_models["sonnet"],
+                                messages=messages, tools=tools,
+                                system=system_prompt, max_tokens=max_tokens
+                            )
+                        except Exception as grok_err:
+                            logger.error(f"Grok also failed: {grok_err}")
+                            raise claude_err
+                    else:
+                        logger.error(f"Claude Sonnet failed: {claude_err}")
+                        raise claude_err
 
     async def _summarize_with_fallback(
         self,

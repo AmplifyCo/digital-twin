@@ -46,6 +46,15 @@ class AgentConfig:
     gemini_model: str = "gemini/gemini-2.0-flash"
     gemini_enabled: bool = True  # Enabled by default as primary
 
+    # Grok (optional fallback)
+    grok_enabled: bool = False
+    grok_models: Dict[str, str] = field(default_factory=lambda: {
+        "flash": "xai/grok-beta",
+        "haiku": "xai/grok-1",
+        "sonnet": "xai/grok-advanced",
+        "quality": "xai/grok-4.1"
+    })
+
     # Local Models (optional, for CPU inference)
     local_model_enabled: bool = False
     local_model_name: str = "HuggingFaceTB/SmolLM2-1.7B-Instruct"  # Status, reports, monitoring

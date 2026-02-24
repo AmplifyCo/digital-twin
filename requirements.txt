@@ -65,3 +65,7 @@ pytz>=2023.3
 twilio>=9.0.0
 python-multipart>=0.0.6
 playwright>=1.41.0
+
+# For intent classification with DistilBERT (install on EC2)
+transformers
+torch

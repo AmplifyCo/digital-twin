@@ -177,7 +177,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
 
         # Initialize agent
         logger.info("🤖 Initializing autonomous agent...")
-        agent = AutonomousAgent(config, brain)
+        agent = AutonomousAgent(config, brain, gemini_client=grok_client)
         agent.start_time = datetime.now()  # Track start time for uptime
         agent.digital_brain = digital_brain   # Conversation memories, preferences, contacts
         agent.core_brain = core_brain         # Intelligence principles, build knowledge, patterns
@@ -349,6 +349,14 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             if gemini_client:
                 logger.info("✨ LiteLLM unified routing enabled — Gemini Flash + Claude Sonnet")
                 agent.gemini_client = gemini_client
+
+            # Initialize Grok client
+            grok_api_key = os.getenv("GROK_API_KEY", "")
+            from src.integrations.grok_client import GrokClient
+            grok_client = GrokClient(api_key=grok_api_key) if grok_api_key else None
+            if grok_client:
+                logger.info("✨ Grok client enabled for fallbacks")
+                agent.grok_client = grok_client
 
             # Initialize Semantic Router (fast-path intent classification)
             semantic_router = SemanticRouter()

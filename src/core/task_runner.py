@@ -93,19 +93,24 @@ class TaskRunner:
 
             # Step 2: Execute each subtask sequentially
             all_results = []
+            num_subtasks = len(subtasks)
             for idx, subtask in enumerate(subtasks):
-                logger.info(f"Task {task.id}: executing subtask {idx+1}/{len(subtasks)}: {subtask.description[:60]}")
+                logger.info(f"Task {task.id}: executing subtask {idx+1}/{num_subtasks}: {subtask.description[:60]}")
                 self.task_queue.update_subtask(task.id, idx, "running")
 
                 result = await self._execute_subtask(task, subtask, idx, all_results)
                 all_results.append(f"Step {idx+1}: {result}")
 
-                if result.startswith("ERROR:") and idx < len(subtasks) - 1:
+                if result.startswith("ERROR:") and idx < num_subtasks - 1:
                     # Non-synthesis step failed — continue (later steps may still work)
                     logger.warning(f"Subtask {idx+1} failed, continuing: {result}")
                     self.task_queue.update_subtask(task.id, idx, "failed", error=result)
                 else:
                     self.task_queue.update_subtask(task.id, idx, "done", result=result[:500])
+
+                # Send progress notification if multiple subtasks
+                if num_subtasks > 1 and task.notify_on_complete:
+                    await self._notify_progress(task, idx + 1, num_subtasks, all_results)
 
             # Step 3: Build summary from results
             summary = self._build_summary(task.goal, all_results)
@@ -174,6 +179,27 @@ class TaskRunner:
 
     # ── Notification ──────────────────────────────────────────────────────────
 
+    async def _notify_progress(self, task: Task, completed: int, total: int, results: list):
+        """Notify progress on both Telegram and WhatsApp for multi-subtask tasks."""
+        prog_msg = (
+            f"🛠️ Task {task.id} progress: {completed}/{total} steps done\n"
+            f"Goal: {task.goal[:100]}\n"
+            f"Latest: {results[-1][:200] if results else 'Starting...'}"
+        )
+
+        # Telegram
+        try:
+            await self.telegram.notify(prog_msg, level="info")
+        except Exception as e:
+            logger.warning(f"Telegram progress failed: {e}")
+
+        # WhatsApp (if configured)
+        if self.whatsapp_channel and task.user_id:
+            try:
+                await self.whatsapp_channel.send_message(task.user_id, prog_msg)
+            except Exception as e:
+                logger.warning(f"WhatsApp progress failed: {e}")
+
     async def _notify_user(self, task: Task, summary: str):
         """Notify user via Telegram + WhatsApp when a task completes."""
         file_path = f"./data/tasks/{task.id}.txt"
@@ -190,7 +216,7 @@ class TaskRunner:
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
 
-        # WhatsApp notification (attempt if configured and user_id present, for robustness)
+        # WhatsApp notification (always attempt if configured)
         if self.whatsapp_channel and task.user_id:
             wa_msg = (
                 f"✅ Done! Here's what I found:\n\n"
@@ -212,9 +238,11 @@ class TaskRunner:
                     logger.error(f"WhatsApp fallback failed: {fallback_e}")
                 # Final fallback: notify via Telegram
                 await self.telegram.notify(f"WhatsApp failed for task {task.id}: {str(e)[:100]} — Summary: {summary[:200]}", level="warning")
+        elif not self.whatsapp_channel:
+            logger.debug("WhatsApp channel not configured, skipping WhatsApp notification")
 
     async def _notify_failure(self, task: Task, error: str):
-        """Notify user when a task fails."""
+        """Notify user when a task fails on both Telegram and WhatsApp."""
         msg = (
             f"❌ *Background task failed*\n\n"
             f"*Goal:* {task.goal[:100]}\n"
@@ -224,16 +252,16 @@ class TaskRunner:
         try:
             await self.telegram.notify(msg, level="warning")
         except Exception as e:
-            logger.warning(f"Failure notification failed: {e}")
+            logger.warning(f"Telegram failure notification failed: {e}")
 
-        if task.channel == "whatsapp" and self.whatsapp_channel and task.user_id:
+        if self.whatsapp_channel and task.user_id:
             try:
                 await self.whatsapp_channel.send_message(
                     task.user_id,
                     f"Sorry, I wasn't able to complete that task. Error: {error[:100]}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"WhatsApp failure notification failed: {e}")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

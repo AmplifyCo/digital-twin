@@ -49,6 +49,8 @@ from src.core.brain.working_memory import WorkingMemory
 from src.core.brain import tone_analyzer as _tone_analyzer
 from src.core.brain.episodic_memory import EpisodicMemory
 
+from transformers import pipeline
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,6 +156,14 @@ class ConversationManager:
 
         # Public reference to the AutonomousAgent for async background delegation
         self.agent = agent
+
+        # DistilBERT for intent classification (placeholder - replace with fine-tuned model path)
+        try:
+            self.intent_classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english", device=-1)  # CPU
+            logger.info("DistilBERT intent classifier loaded (placeholder model)")
+        except Exception as e:
+            logger.warning(f"Failed to load DistilBERT: {e}. Falling back to keyword matching.")
+            self.intent_classifier = None
 
         # Task queue for background autonomous execution (injected by main.py)
         self.task_queue = None
@@ -1391,6 +1401,22 @@ User says "good morning" → none"""
         except Exception as e:
             logger.warning(f"Haiku intent failed, using keyword fallback: {e}")
 
+        # DistilBERT classification
+        if self.intent_classifier:
+            try:
+                result = self.intent_classifier(message)[0]
+                label = result['label'].lower()  # e.g., 'positive' - map to your intents
+                score = result['score']
+                # Placeholder mapping - adjust based on fine-tuned labels
+                intent_map = {
+                    'positive': 'action',  # Example mapping
+                    'negative': 'conversation'
+                }
+                action = intent_map.get(label, 'unknown')
+                return {"action": action, "confidence": score, "parameters": {}, "_conversation_history": conversation_history}
+            except Exception as e:
+                logger.warning(f"DistilBERT classification failed: {e}, falling back to keywords")
+
         # FALLBACK: Keyword matching (when API is down/rate-limited)
         result = await self._parse_intent_locally(message)
         logger.info(f"Keyword intent: {result['action']} (confidence: {result['confidence']})")
@@ -1545,7 +1571,14 @@ Examples:
 "Call me boss" → conversation|high|none|none|no
 "What's the capital of France?" → question|high|none|none|no
 "How does photosynthesis work?" → question|high|none|none|no
-"Do the thing" (no context) → clarify|low|What would you like me to do?|none|no"""
+"Do the thing" (no context) → clarify|low|What would you like me to do?|none|no
+
+Additional Examples for Background:
+"Research quantum computing" → action|high|Research quantum computing and summarize findings|web_search|yes
+"Find best laptop under $1000" → action|high|Research and compare laptops under $1000|web_search|yes
+"Plan a trip to Paris" → action|high|Plan trip to Paris including flights and hotels|web_search,calendar|yes
+"Check weather" → action|high|Check current weather|web_search|no
+"Set alarm for 7am" → action|high|Set alarm for 7am|reminder_set|no"""
 
             # Try primary intent client (Gemini Flash via LiteLLM)
             try:
