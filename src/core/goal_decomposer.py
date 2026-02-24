@@ -60,12 +60,14 @@ class GoalDecomposer:
     Falls back gracefully to a 2-step default if Gemini is unavailable.
     """
 
-    def __init__(self, gemini_client=None):
+    def __init__(self, gemini_client=None, template_library=None):
         """
         Args:
             gemini_client: GeminiClient (LiteLLM wrapper). If None, uses fallback decomposition.
+            template_library: ReasoningTemplateLibrary for reusing past decompositions.
         """
         self.gemini_client = gemini_client
+        self.template_library = template_library
         self._model = "gemini/gemini-2.0-flash"
 
     async def decompose(
@@ -90,12 +92,24 @@ class GoalDecomposer:
             logger.warning("GoalDecomposer: Gemini unavailable, using fallback decomposition")
             return self._make_fallback(goal, task_id)
 
+        # Query template library for similar past decompositions
+        template_context = ""
+        if self.template_library:
+            try:
+                templates = await self.template_library.query_similar(goal, top_k=2)
+                if templates:
+                    template_context = "\n\n" + self.template_library.format_for_prompt(templates) + "\n"
+            except Exception as e:
+                logger.debug(f"GoalDecomposer: template query failed (continuing without): {e}")
+
         prompt = _DECOMPOSE_PROMPT.format(
             bot_name=_BOT_NAME,
             tools=tools_str,
             goal=goal,
             task_id=task_id,
         )
+        if template_context:
+            prompt = template_context + "\n" + prompt
 
         try:
             # Single call to Gemini Flash — no tools needed, just JSON output

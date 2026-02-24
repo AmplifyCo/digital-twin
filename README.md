@@ -11,6 +11,24 @@ Unlike SaaS AI assistants, Nova runs entirely on infrastructure you own. Your da
 
 ---
 
+## Nova's Purpose
+
+> *Nova exists to be the proactive half of your intelligence — noticing what you'd notice if you had infinite time, acting on what needs doing before you ask, and learning enough about you to anticipate rather than just respond.*
+
+Nova's purpose drives five proactive behaviors, all within security guardrails:
+
+| Drive | When | What Nova does |
+|---|---|---|
+| **Morning briefing** | 7:30–9am daily | Today's agenda, upcoming events, time-sensitive follow-ups |
+| **Evening summary** | 7–9pm daily | What was accomplished, what's pending for tomorrow |
+| **Weekly look-ahead** | Sunday 6pm | 7-day horizon: deadlines, events, preparation suggestions |
+| **Curiosity scan** | Every 6h (waking hours) | Unresolved items, patterns, connections worth surfacing |
+| **Spontaneous interest** | Any scan | Surfaces unexpected observations without being asked |
+
+These drives are defined in `brain/nova_purpose.py` and executed by `brain/attention_engine.py`.
+
+---
+
 ## What Nova Can Do
 
 | Capability | Details |
@@ -43,7 +61,7 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 └────────────────────────┬─────────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────────┐
-│                        HEART                              │
+│                      coreEngine                           │
 │         ConversationManager + AutonomousAgent             │
 │                                                           │
 │  Semantic Router → LLM Intent (Gemini Flash / Haiku)      │
@@ -59,7 +77,7 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 └────────┬──────────────────────┬────────────────────────── ┘
          │                      │
 ┌────────▼────────┐   ┌─────────▼────────────────────────┐
-│     BRAIN        │   │       NERVOUS SYSTEM              │
+│     BRAIN        │   │       Execution Governor          │
 │                  │   │       (ExecutionGovernor)         │
 │  CoreBrain       │   │                                   │
 │  · 5 intelligence│   │  · PolicyGate — risk-based        │
@@ -94,7 +112,7 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 │                                                         │
 │  ReminderScheduler   · 30s   · fire due reminders      │
 │  TaskRunner          · 15s   · autonomous multi-step   │
-│  AttentionEngine     · 6h    · proactive observations  │
+│  AttentionEngine     · 6h    · purpose-driven proactivity (driven by NovaPurpose) │
 │  SelfHealingMonitor  · 5min  · detect + auto-fix       │
 │  MemoryConsolidator  · 6h    · prune old turns         │
 │  Dashboard           · always · web monitoring UI      │
@@ -142,7 +160,8 @@ Third-party content (emails from others) is **summarised before storage**, never
 | **Tone Analyzer** | `brain/tone_analyzer.py` | Detects 5 tone registers in real-time, zero-latency |
 | **Working Memory** | `brain/working_memory.py` | Tracks momentum, urgency, and conversation state |
 | **Episodic Memory** | `brain/episodic_memory.py` | Records event-outcome pairs; builds confidence from history |
-| **Attention Engine** | `brain/attention_engine.py` | Proactive observations every 6h; notices things without being asked |
+| **Purpose** | `brain/nova_purpose.py` | Nova's soul — 5 drives (morning, evening, weekly, curiosity, spontaneous) shape all proactive behavior |
+| **Attention Engine** | `brain/attention_engine.py` | Purpose-driven proactive observations every 6h (morning brief, evening summary, curiosity scan) |
 | **Goal Decomposer** | `core/goal_decomposer.py` | Breaks complex goals into 3–7 executable subtasks |
 | **Task Runner** | `core/task_runner.py` | Autonomous background execution; notifies on Telegram when done |
 | **Intent Collector** | `brain/intent_data_collector.py` | Captures live intent labels as training data for future model fine-tuning |
@@ -359,7 +378,8 @@ digital-twin/
 │   │   │   ├── digital_clone_brain.py # Memory (what Nova knows about you)
 │   │   │   ├── working_memory.py     # Per-session tone + state
 │   │   │   ├── episodic_memory.py    # Event-outcome history
-│   │   │   ├── attention_engine.py   # Proactive background observations
+│   │   │   ├── nova_purpose.py       # Purpose drives: morning, evening, weekly, curiosity
+│   │   │   ├── attention_engine.py   # Purpose-driven proactive observations
 │   │   │   ├── tone_analyzer.py      # Real-time tone detection
 │   │   │   ├── semantic_router.py    # Fast-path intent matching
 │   │   │   └── intent_data_collector.py  # Training data capture

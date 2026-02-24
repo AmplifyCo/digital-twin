@@ -26,6 +26,9 @@ from src.core.brain.working_memory import WorkingMemory
 from src.core.brain.episodic_memory import EpisodicMemory
 from src.core.brain.intent_data_collector import IntentDataCollector
 from src.core.brain.attention_engine import AttentionEngine
+from src.core.brain.critic_agent import CriticAgent
+from src.core.brain.reasoning_template_library import ReasoningTemplateLibrary
+from src.core.brain.nova_purpose import NovaPurpose
 from src.integrations.anthropic_client import AnthropicClient
 from src.integrations.model_router import ModelRouter
 from src.channels.telegram_channel import TelegramChannel
@@ -478,6 +481,15 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         # Start background TaskRunner (autonomous multi-step task execution)
         _whatsapp_ch = twilio_whatsapp_channel if 'twilio_whatsapp_channel' in locals() else None
         if 'task_queue' in locals():
+            # Critic Agent + Reasoning Template Library (arXiv:2507.01446 + STELLA)
+            _gemini_for_critic = gemini_client if 'gemini_client' in locals() else None
+            _anthropic_for_critic = anthropic_client if 'anthropic_client' in locals() else None
+            _critic = CriticAgent(
+                gemini_client=_gemini_for_critic,
+                anthropic_client=_anthropic_for_critic,
+            )
+            _template_library = ReasoningTemplateLibrary(db_path="./data/lancedb")
+
             _task_runner = TaskRunner(
                 task_queue=task_queue,
                 goal_decomposer=goal_decomposer,
@@ -485,19 +497,25 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 telegram_notifier=telegram,
                 brain=digital_brain,
                 whatsapp_channel=_whatsapp_ch,
+                critic=_critic,
+                template_library=_template_library,
             )
+            # Wire template_library into goal_decomposer for reuse on future tasks
+            goal_decomposer.template_library = _template_library
             asyncio.create_task(_task_runner.start())
-            logger.info("🚀 Background TaskRunner started")
+            logger.info("🚀 Background TaskRunner started (with CriticAgent + ReasoningTemplateLibrary)")
         else:
             logger.warning("TaskRunner skipped (Telegram not configured — task_queue unavailable)")
 
-        # Start AttentionEngine (proactive observations every 6h)
+        # Start AttentionEngine (proactive observations every 6h — driven by NovaPurpose)
         _gemini_for_attention = gemini_client if 'gemini_client' in locals() else None
+        _nova_purpose = NovaPurpose()
         _attention_engine = AttentionEngine(
             digital_brain=digital_brain,
             llm_client=_gemini_for_attention,
             telegram_notifier=telegram,
             owner_name=config.owner_name,
+            purpose=_nova_purpose,
         )
         attention_task = asyncio.create_task(_attention_engine.start())
         logger.info("🔍 AttentionEngine started (proactive observations every 6h)")

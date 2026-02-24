@@ -42,6 +42,8 @@ class TaskRunner:
         telegram_notifier,           # TelegramNotifier
         brain=None,                  # DigitalCloneBrain (for storing results)
         whatsapp_channel=None,       # TwilioWhatsAppChannel (for WhatsApp notifications)
+        critic=None,                 # CriticAgent (validates results before delivery)
+        template_library=None,       # ReasoningTemplateLibrary (stores successful decompositions)
     ):
         self.task_queue = task_queue
         self.goal_decomposer = goal_decomposer
@@ -49,6 +51,8 @@ class TaskRunner:
         self.telegram = telegram_notifier
         self.brain = brain
         self.whatsapp_channel = whatsapp_channel
+        self.critic = critic
+        self.template_library = template_library
         self._running = False
         self._current_task_id: Optional[str] = None
         Path("./data/tasks").mkdir(parents=True, exist_ok=True)
@@ -124,7 +128,30 @@ class TaskRunner:
                 if num_subtasks > 1 and task.notify_on_complete:
                     await self._notify_progress(task, idx + 1, num_subtasks, all_results)
 
-            # Step 3: Build summary from results
+            # Step 3: Critic validation — evaluate quality before delivery
+            critic_score = 0.8  # default if critic unavailable
+            if self.critic:
+                try:
+                    critic_result = await self.critic.evaluate(task.goal, subtasks, all_results)
+                    critic_score = critic_result.score
+                    logger.info(f"Task {task.id}: critic score {critic_result.score:.2f} (passed={critic_result.passed})")
+                    if not critic_result.passed and critic_result.refinement_hint:
+                        logger.info(f"Task {task.id}: running refinement pass — {critic_result.refinement_hint[:80]}")
+                        refined = await self.critic.refine(task.goal, all_results, critic_result.refinement_hint)
+                        if refined:
+                            all_results.append(f"Step {len(all_results)+1} (refined): {refined}")
+                            critic_score = 0.8  # assume acceptable after refinement
+                except Exception as e:
+                    logger.warning(f"Task {task.id}: critic evaluation failed (proceeding): {e}")
+
+            # Step 4: Store successful decomposition as a reusable template
+            if self.template_library and critic_score >= 0.7:
+                try:
+                    await self.template_library.store(task.goal, subtasks, critic_score)
+                except Exception as e:
+                    logger.warning(f"Task {task.id}: template store failed: {e}")
+
+            # Step 5: Build summary from results
             summary = self._build_summary(task.goal, all_results)
             self.task_queue.mark_done(task.id, result=summary)
 
@@ -181,13 +208,57 @@ class TaskRunner:
                 return result or "Step completed (no output)"
             except Exception as e:
                 error_str = str(e)
-                if attempt < self.MAX_SUBTASK_RETRIES - 1 and ("429" in error_str or "rate_limit" in error_str):
-                    logger.warning(f"Rate limited on subtask {idx+1}, retrying in 30s...")
-                    await asyncio.sleep(30)
+                if attempt < self.MAX_SUBTASK_RETRIES - 1:
+                    if "429" in error_str or "rate_limit" in error_str:
+                        logger.warning(f"Rate limited on subtask {idx+1}, retrying in 30s...")
+                        await asyncio.sleep(30)
+                    else:
+                        # Semantic retry: generate targeted fix hint before retrying
+                        hint = await self._generate_retry_hint(subtask.description, error_str)
+                        task_prompt = (
+                            f"PREVIOUS ATTEMPT FAILED: {error_str[:200]}\n"
+                            f"HINT FOR THIS RETRY: {hint}\n\n"
+                            f"---\n{task_prompt}"
+                        )
+                        logger.warning(f"Subtask {idx+1} logic failure, retrying with hint: {hint[:80]}")
                     continue
                 return f"ERROR: {error_str[:200]}"
 
         return "ERROR: Max retries exceeded"
+
+    async def _generate_retry_hint(self, subtask_desc: str, error: str) -> str:
+        """Ask Gemini Flash what went wrong and what different approach to try.
+
+        Returns a 1-2 sentence hint string, or a generic fallback on any error.
+        """
+        # Try to use the agent's gemini client if available
+        gemini = getattr(self.agent, "gemini_client", None) if self.agent else None
+        if not gemini or not getattr(gemini, "enabled", False):
+            return "Try a different search query or use a different tool to accomplish this step."
+
+        hint_prompt = (
+            f"An AI agent failed a task step. In 1-2 sentences only, suggest what it should "
+            f"try differently on the next attempt.\n\n"
+            f"Step: {subtask_desc[:200]}\n"
+            f"Error: {error[:200]}"
+        )
+        try:
+            response = await gemini.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": hint_prompt}],
+                max_tokens=128,
+            )
+            hint = ""
+            if hasattr(response, "content"):
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        hint += block.text
+            elif isinstance(response, str):
+                hint = response
+            return hint.strip() or "Try a different approach for this step."
+        except Exception as e:
+            logger.debug(f"_generate_retry_hint failed: {e}")
+            return "Try a different approach or use a different tool for this step."
 
     # ── Notification ──────────────────────────────────────────────────────────
 

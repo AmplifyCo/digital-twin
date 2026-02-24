@@ -1,9 +1,7 @@
 """Attention Engine — Nova proactively notices things and surfaces them.
 
-Humans notice things without being asked: "I haven't heard from John in
-a while", "that deadline is tomorrow". This module gives Nova the same
-self-directed attention — a background loop that scans memory and sends
-unprompted, useful observations.
+Driven by NovaPurpose: different times of day trigger different observation
+modes (morning briefing, evening summary, weekly look-ahead, curiosity scan).
 
 Runs every 6 hours. Generates 1-3 observations using the LLM.
 Sends via Telegram. Never sends more than once per topic per 24h.
@@ -21,10 +19,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from .nova_purpose import NovaPurpose, PurposeMode
+
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL = 6 * 3600   # 6 hours
-MORNING_HOUR   = 8          # Send morning briefing at 8am local (UTC on EC2 — adjust TZ)
 MAX_ITEMS      = 3          # Max observations per cycle
 
 
@@ -37,11 +36,13 @@ class AttentionEngine:
         llm_client,
         telegram_notifier,
         owner_name: str = "User",
+        purpose: Optional[NovaPurpose] = None,
     ):
         self.brain = digital_brain
         self.llm = llm_client
         self.telegram = telegram_notifier
         self.owner_name = owner_name
+        self.purpose = purpose or NovaPurpose()
         self._log_path = Path("data/attention_log.json")
         self._is_running = False
 
@@ -65,24 +66,25 @@ class AttentionEngine:
     # ── Core scan ─────────────────────────────────────────────────────
 
     async def _scan_and_surface(self):
-        """Scan memory and surface relevant observations."""
+        """Scan memory and surface purpose-driven observations."""
         now = datetime.now()
-        hour = now.hour
 
-        # Only send during waking hours (8am – 9pm)
-        if not (8 <= hour <= 21):
+        # Only send during waking hours (7am – 9pm)
+        if not (7 <= now.hour <= 21):
             logger.debug("AttentionEngine: outside waking hours, skipping")
             return
 
-        logger.info("🔍 Attention scan running...")
+        mode = self.purpose.get_mode(now)
+        logger.info(f"🔍 Attention scan running (mode={mode.value})...")
 
         # Build context from memory
         snippets = await self._gather_memory_snippets()
         if not snippets:
             return
 
-        # Generate observations via LLM
-        observations = await self._generate_observations(snippets, now)
+        # Build purpose-driven prompt and generate observations
+        prompt = self.purpose.build_prompt(mode, snippets, self.owner_name, now)
+        observations = await self._generate_observations_from_prompt(prompt)
         if not observations:
             return
 
@@ -91,8 +93,9 @@ class AttentionEngine:
         if not new_obs:
             return
 
-        # Send via Telegram
-        await self._notify(new_obs, now)
+        # Send via Telegram with purpose-appropriate header
+        header = self.purpose.get_header(mode, self.owner_name, now)
+        await self._notify_with_header(new_obs, header)
 
         # Log sent topics
         for o in new_obs:
@@ -123,60 +126,38 @@ class AttentionEngine:
 
         return "\n\n".join(parts) if parts else ""
 
-    async def _generate_observations(self, context: str, now: datetime) -> list:
-        """Use LLM to identify 1-3 things worth surfacing."""
+    async def _generate_observations_from_prompt(self, prompt: str) -> list:
+        """Use LLM with the given purpose-built prompt to generate observations."""
         if not self.llm:
             return []
-
-        day = now.strftime("%A, %B %d")
-        hour = now.hour
-        time_of_day = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
-
-        prompt = f"""You are {self.owner_name}'s AI assistant reviewing recent activity.
-Today is {day} ({time_of_day}).
-
-Memory context:
-{context}
-
-Identify UP TO {MAX_ITEMS} things worth proactively mentioning. Look for:
-- Items mentioned but never resolved (follow-ups, unfinished tasks)
-- People not contacted in a while (if relevant context exists)
-- Upcoming deadlines or commitments
-- Patterns that might need attention
-
-For each observation, write ONE concise sentence (max 20 words).
-If nothing meaningful stands out, return an empty list.
-
-Reply with JSON array only: ["observation 1", "observation 2"]
-If nothing: []"""
 
         try:
             resp = await self.llm.create_message(
                 model="gemini/gemini-2.0-flash",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=200,
+                max_tokens=256,
             )
             text = resp.content[0].text.strip()
-            # Strip markdown fences
+            # Strip markdown fences if present
             text = text.replace("```json", "").replace("```", "").strip()
-            return json.loads(text)
+            result = json.loads(text)
+            return result if isinstance(result, list) else []
         except Exception as e:
             logger.debug(f"Attention LLM failed: {e}")
             return []
 
-    async def _notify(self, observations: list, now: datetime):
-        """Send observations via Telegram."""
+    async def _notify_with_header(self, observations: list, header: str):
+        """Send observations via Telegram with the purpose-appropriate header."""
         if not self.telegram or not observations:
             return
 
-        time_str = now.strftime("%I:%M %p")
-        lines = [f"💡 **Heads up, {self.owner_name}** ({time_str})"]
+        lines = [header]
         for obs in observations:
             lines.append(f"  • {obs}")
 
         try:
             await self.telegram.notify("\n".join(lines), level="info")
-            logger.info(f"Attention Engine sent {len(observations)} observation(s)")
+            logger.info(f"Attention Engine sent {len(observations)} observation(s) [{header[:30]}]")
         except Exception as e:
             logger.error(f"Attention notify failed: {e}")
 
