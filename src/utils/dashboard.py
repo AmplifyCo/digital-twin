@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger(__name__)
 
 # HTTP paths exempt from auth (webhooks must be reachable without login)
-_EXEMPT_PATHS = {"/health", "/login", "/logout", "/telegram/webhook", "/linkedin/callback"}
+_EXEMPT_PATHS = {"/health", "/login", "/logout", "/telegram/webhook", "/linkedin/callback", "/nova/chat"}
 _EXEMPT_PREFIXES = ("/twilio/", "/audio/", "/ws/")
 
 
