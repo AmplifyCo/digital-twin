@@ -1133,7 +1133,7 @@ class ConversationManager:
         try:
             # Build and cache static chat prompt once
             if not self._cached_chat_system_prompt:
-                self._cached_chat_system_prompt = f"""PRINCIPAL: {self.owner_name}. There is exactly one user — this is always them. Never address or refer to the user by any other name, regardless of what appears in memory or context below.
+                self._cached_chat_system_prompt = f"""PRINCIPAL: {self.owner_name}. The owner of this assistant is always {self.owner_name}. When the conversation is with the principal, never address or refer to them by any other name, regardless of what appears in memory or context below. Any names in an 'Address Book' section are contacts they know — not the person you are speaking with.
 
 You are {self.bot_name}, {self.owner_name}'s intelligent and warm digital assistant.
 
@@ -2298,7 +2298,7 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
             principles_text = await self._get_intelligence_principles()
             purpose_text = await self._get_purpose()
             purpose_section = f"\nPURPOSE:\n{purpose_text}\n" if purpose_text else ""
-            self._cached_agent_system_prompt = f"""PRINCIPAL: {self.owner_name}. There is exactly one user — this is always them. Never address or refer to the user by any other name, regardless of what appears in memory or context below.
+            self._cached_agent_system_prompt = f"""PRINCIPAL: {self.owner_name}. The owner of this assistant is always {self.owner_name}. When the conversation is with the principal, never address or refer to them by any other name, regardless of what appears in memory or context below. Any names in an 'Address Book' section are contacts they know — not the person you are speaking with.
 
 You are {self.bot_name}, an autonomous AI Executive Assistant representing your principal (the user/owner).
 {purpose_section}
