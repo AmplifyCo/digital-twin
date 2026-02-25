@@ -11,9 +11,10 @@ Security: read/write is local file only. No external calls. No PII stored here
 import json
 import logging
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,102 @@ class WorkingMemory:
             return ""
 
         return "WORKING MEMORY:\n" + "\n".join(parts)
+
+    # ── Pending Actions (confirmation loop fix) ─────────────────────
+
+    # Max age for a pending action before it auto-expires (seconds)
+    _PENDING_ACTION_TTL = 600  # 10 minutes
+
+    def add_pending_action(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        label: str,
+        proposal_text: str,
+    ):
+        """Store an action that Nova proposed and is awaiting user confirmation.
+
+        Args:
+            tool_name: The tool to execute (e.g. "x_tool", "email_send")
+            parameters: The parameters to pass to the tool
+            label: Short human label (e.g. "post tweet", "send email to Bob")
+            proposal_text: The full bot message that proposed this action
+        """
+        pending: List[Dict] = self._state.get("pending_actions", [])
+
+        # Replace existing pending action from the same tool (no two pending tweets)
+        pending = [p for p in pending if p.get("tool_name") != tool_name]
+
+        pending.append({
+            "tool_name": tool_name,
+            "parameters": parameters,
+            "label": label.strip()[:80],
+            "proposal_text": proposal_text.strip()[:500],
+            "created_at": time.time(),
+        })
+
+        # Cap at 3 pending actions max
+        if len(pending) > 3:
+            pending = pending[-3:]
+
+        self._state["pending_actions"] = pending
+        self._save()
+        logger.info(f"Pending action stored: {label[:60]} (tool={tool_name})")
+
+    def get_pending_actions(self) -> List[Dict[str, Any]]:
+        """Return non-expired pending actions, cleaning up stale ones."""
+        pending: List[Dict] = self._state.get("pending_actions", [])
+        now = time.time()
+
+        live = [p for p in pending if now - p.get("created_at", 0) < self._PENDING_ACTION_TTL]
+
+        if len(live) != len(pending):
+            self._state["pending_actions"] = live
+            self._save()
+
+        return live
+
+    def pop_pending_action(self, tool_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Remove and return a pending action (by tool_name or most-recent).
+
+        Args:
+            tool_name: Specific tool to pop. If None, pops the most recent.
+
+        Returns:
+            The pending action dict, or None if nothing matches.
+        """
+        pending = self.get_pending_actions()
+        if not pending:
+            return None
+
+        matched = None
+        if tool_name:
+            for p in pending:
+                if p["tool_name"] == tool_name:
+                    matched = p
+                    break
+        else:
+            matched = pending[-1]  # most recent
+
+        if matched:
+            self._state["pending_actions"] = [p for p in pending if p is not matched]
+            self._save()
+        return matched
+
+    def pop_all_pending_actions(self) -> List[Dict[str, Any]]:
+        """Remove and return all pending actions."""
+        pending = self.get_pending_actions()
+        if pending:
+            self._state["pending_actions"] = []
+            self._save()
+        return pending
+
+    def clear_pending_actions(self):
+        """Discard all pending actions (user said 'no' / 'cancel')."""
+        if self._state.get("pending_actions"):
+            self._state["pending_actions"] = []
+            self._save()
+            logger.info("All pending actions cleared")
 
     # ── Properties ────────────────────────────────────────────────────
 

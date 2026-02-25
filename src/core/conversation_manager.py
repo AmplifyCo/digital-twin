@@ -593,6 +593,14 @@ class ConversationManager:
                 logger.info(f"[{trace_id}] Task interrupt handled")
                 return interrupt_response
 
+            # ── Pending action confirmation/decline ───────────────────────
+            # If Nova previously proposed an action ("want me to post this?"),
+            # intercept "yes"/"no" before they hit intent routing.
+            confirmation_response = await self._handle_pending_action_confirmation(message)
+            if confirmation_response:
+                logger.info(f"[{trace_id}] Pending action confirmation handled")
+                return confirmation_response
+
             # ── Behavioral calibration detection ─────────────────────────
             # e.g. "be more concise", "be more formal", "stop being verbose"
             if self.working_memory:
@@ -936,7 +944,7 @@ class ConversationManager:
 
             # Build context-aware system prompt (pass message string, not intent dict)
             system_prompt = await self._build_system_prompt(message)
-            
+
             # Use agent_task (enriched with conversation history + memory)
             # NOT raw message — otherwise agent loses multi-turn context
             response = await self.agent.run(
@@ -945,6 +953,9 @@ class ConversationManager:
                 pii_map=pii_map,
                 model_tier=model_tier
             )
+            # Check if Nova proposed an action instead of executing it
+            # (e.g. "Here's a draft tweet — shall I post it?")
+            self._detect_and_store_proposal(response, intent)
             # Learn from action conversations (preferences, calibration, etc.)
             await self._learn_from_conversation(message, response)
             return response
@@ -978,6 +989,10 @@ class ConversationManager:
             msg_lower = message.strip().lower()
 
             # Only use tool-less _chat() for trivial greetings/acknowledgments
+            # "yes"/"no" etc. are included here because by this point,
+            # _handle_pending_action_confirmation() has already run (above).
+            # If there were pending actions, it would have returned early.
+            # Reaching here means no pending actions → treat as trivial.
             trivial_messages = {
                 "hi", "hey", "hello", "yo", "sup",
                 "ok", "okay", "thanks", "thank you", "thx",
@@ -1788,6 +1803,212 @@ Additional Examples for Background:
         return (
             f"Stopped — I've cancelled {count} background task(s). "
             f"What would you like me to focus on instead?"
+        )
+
+    # ── Pending Action Confirmation / Decline ────────────────────────────────
+    # Patterns that mean "yes, do it"
+    _CONFIRM_PATTERNS = [
+        r"^yes$", r"^yeah$", r"^yep$", r"^yup$", r"^sure$", r"^absolutely$",
+        r"^do it$", r"^go ahead$", r"^go for it$", r"^fire away$",
+        r"^confirm$", r"^approved$", r"^send it$", r"^post it$", r"^ship it$",
+        r"^please do$", r"^yes please$", r"^yeah do it$", r"^yes do it$",
+        r"^that'?s? (good|great|perfect|fine)$",
+        r"^looks? good", r"^lgtm$",
+    ]
+    # Patterns that mean "no, don't do it"
+    _DECLINE_PATTERNS = [
+        r"^no$", r"^nah$", r"^nope$", r"^don'?t$", r"^cancel$",
+        r"^skip it$", r"^never ?mind$", r"^forget it$", r"^scratch that$",
+        r"^no thanks$", r"^not now$", r"^hold off$", r"^don'?t (do|send|post) it$",
+    ]
+    # Patterns that selectively confirm one action (e.g. "just the tweet")
+    _SELECTIVE_CONFIRM_PATTERN = re.compile(
+        r"^(?:just |only )?(the |that )?(.*?)(?:\s*one)?$", re.IGNORECASE
+    )
+    # Patterns in Nova's response that indicate a proposal awaiting confirmation
+    _PROPOSAL_PATTERNS = [
+        r"(?:shall|should) I ",
+        r"(?:want|like) me to ",
+        r"(?:ready to|go ahead and) ",
+        r"I(?:'ll| will| can) .{5,60}(?:\?|if you(?:'d)? like)",
+        r"here(?:'s| is) (?:the |a )?draft",
+        r"does this look (?:good|ok|right)",
+    ]
+
+    async def _handle_pending_action_confirmation(self, message: str) -> Optional[str]:
+        """Check if message confirms or declines a pending action.
+
+        Runs BEFORE intent classification. Only activates when WorkingMemory
+        has pending actions. Returns a response string if handled, None otherwise.
+        """
+        if not self.working_memory:
+            return None
+
+        pending = self.working_memory.get_pending_actions()
+        if not pending:
+            return None
+
+        msg_lower = message.lower().strip()
+
+        # ── DECLINE: clear all pending actions ────────────────────────
+        is_decline = any(
+            re.search(p, msg_lower) for p in self._DECLINE_PATTERNS
+        )
+        if is_decline:
+            count = len(pending)
+            labels = [p["label"] for p in pending]
+            self.working_memory.clear_pending_actions()
+            logger.info(f"User declined {count} pending action(s): {labels}")
+            if count == 1:
+                return f"Got it — I won't {pending[0]['label']}."
+            return f"Got it — cancelled all {count} pending actions."
+
+        # ── CONFIRM ALL: execute every pending action ─────────────────
+        is_confirm = any(
+            re.search(p, msg_lower) for p in self._CONFIRM_PATTERNS
+        )
+        if is_confirm:
+            return await self._execute_pending_actions(pending)
+
+        # ── SELECTIVE CONFIRM: "just the tweet" / "yes to the email" ──
+        # Only check if there are 2+ pending actions
+        if len(pending) > 1:
+            matched_action = self._match_selective_confirmation(msg_lower, pending)
+            if matched_action:
+                return await self._execute_pending_actions([matched_action])
+
+        # Not a confirmation/decline — let normal routing handle it
+        # But first, clear stale pending actions since user moved on
+        # (if their message is clearly about something else)
+        if len(msg_lower.split()) > 5:
+            # Multi-word message that isn't yes/no = user moved on
+            self.working_memory.clear_pending_actions()
+            logger.info("Pending actions cleared — user moved to a different topic")
+
+        return None
+
+    def _match_selective_confirmation(
+        self, msg_lower: str, pending: list
+    ) -> Optional[dict]:
+        """Try to match a selective confirmation to a specific pending action.
+
+        E.g. "just the tweet" matches pending action with label "post tweet".
+        """
+        m = self._SELECTIVE_CONFIRM_PATTERN.match(msg_lower)
+        if not m:
+            return None
+
+        keyword = m.group(2).strip().lower()
+        if not keyword:
+            return None
+
+        for action in pending:
+            label = action["label"].lower()
+            tool = action["tool_name"].lower()
+            if keyword in label or keyword in tool:
+                return action
+
+        return None
+
+    async def _execute_pending_actions(self, actions: list) -> str:
+        """Execute confirmed pending actions via agent.run().
+
+        Args:
+            actions: List of pending action dicts to execute.
+
+        Returns:
+            Combined response string from executing all actions.
+        """
+        results = []
+        for action in actions:
+            tool_name = action["tool_name"]
+            params = action["parameters"]
+            label = action["label"]
+
+            logger.info(f"Executing confirmed action: {label} (tool={tool_name})")
+
+            # Build an explicit task for the agent that leaves no ambiguity
+            param_desc = json.dumps(params, ensure_ascii=False) if params else ""
+            task = (
+                f"The user has confirmed they want to proceed. "
+                f"Execute the '{tool_name}' tool now with these parameters: {param_desc}\n"
+                f"Action: {label}\n"
+                f"Original proposal: {action.get('proposal_text', '')[:300]}\n\n"
+                f"DO NOT ask for confirmation again — the user already said yes. "
+                f"Execute the tool and report the result."
+            )
+
+            try:
+                system_prompt = await self._build_system_prompt(task)
+                response = await self.agent.run(
+                    task=task,
+                    system_prompt=system_prompt,
+                    model_tier="mid",
+                )
+                results.append(response)
+            except Exception as e:
+                logger.error(f"Failed to execute confirmed action {label}: {e}")
+                results.append(f"Failed to {label}: something went wrong.")
+
+        # Clean up executed actions from pending
+        executed_tools = {a["tool_name"] for a in actions}
+        remaining = [
+            p for p in self.working_memory.get_pending_actions()
+            if p["tool_name"] not in executed_tools
+        ]
+        self.working_memory._state["pending_actions"] = remaining
+        self.working_memory._save()
+
+        # If there are still pending actions, remind the user
+        if remaining:
+            labels = [p["label"] for p in remaining]
+            results.append(f"Still pending: {', '.join(labels)}. Want me to go ahead with those too?")
+
+        return "\n\n".join(results)
+
+    def _detect_and_store_proposal(self, response: str, intent: Dict[str, Any]):
+        """Scan Nova's response for action proposals and store as pending.
+
+        Called after agent.run() returns. If the response contains phrases like
+        "shall I post this?" or "here's a draft", store the proposed action
+        so the next "yes" from the user can execute it directly.
+
+        Args:
+            response: Nova's response text
+            intent: The parsed intent dict (contains tool_hints, inferred_task)
+        """
+        if not self.working_memory:
+            return
+
+        # Only check if response looks like a proposal (has a question mark or draft)
+        response_lower = response.lower()
+        is_proposal = any(
+            re.search(p, response_lower, re.IGNORECASE)
+            for p in self._PROPOSAL_PATTERNS
+        )
+        if not is_proposal:
+            return
+
+        # Extract tool hint from intent
+        tool_hints = intent.get("tool_hints", [])
+        inferred_task = intent.get("inferred_task", "")
+
+        if not tool_hints:
+            # No tool hint — can't create an actionable pending entry
+            return
+
+        # Use the first tool hint as the primary tool
+        tool_name = tool_hints[0] if isinstance(tool_hints, list) else str(tool_hints)
+
+        # Build a human-readable label from the inferred task
+        label = inferred_task[:80] if inferred_task else f"execute {tool_name}"
+
+        # Store as pending action
+        self.working_memory.add_pending_action(
+            tool_name=tool_name,
+            parameters={"inferred_task": inferred_task},
+            label=label,
+            proposal_text=response,
         )
 
     # ── Behavioral calibration detection ─────────────────────────────────────

@@ -68,7 +68,7 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 │         ConversationManager + AutonomousAgent             │
 │                                                           │
 │  Semantic Router → LLM Intent (Gemini Flash / Haiku)      │
-│  → DistilBERT fallback → Keyword fallback                 │
+│  → Keyword fallback                                       │
 │                                                           │
 │  Model Routing:  flash · sonnet · quality tiers           │
 │  Providers:      Claude · Gemini · Grok (via LiteLLM)     │
@@ -149,7 +149,7 @@ Nova maintains a layered memory architecture backed by **LanceDB** (vector store
 
 | Memory Type | What's Stored | Scope |
 |---|---|---|
-| 💭 **Working Memory** | Current tone, urgency, unfinished items | Per session (JSON) |
+| 💭 **Working Memory** | Tone, urgency, unfinished items, pending action confirmations | Per session (JSON) |
 | 🎬 **Episodic Memory** | Action outcomes — what worked, what failed | Persistent (LanceDB) |
 | 💬 **Conversation Memory** | Full history per channel and user | Persistent (LanceDB) |
 | ⚙️ **Preferences** | Learned facts about you — style, habits | Persistent (LanceDB) |
@@ -165,7 +165,7 @@ Third-party content (emails from others) is **summarised before storage**, never
 | Capability | File | What it does |
 |---|---|---|
 | 🎵 **Tone Analyzer** | `brain/tone_analyzer.py` | Detects 5 tone registers in real-time, zero-latency |
-| 💭 **Working Memory** | `brain/working_memory.py` | Tracks momentum, urgency, and conversation state |
+| 💭 **Working Memory** | `brain/working_memory.py` | Tracks momentum, urgency, conversation state, and pending action confirmations |
 | 🎬 **Episodic Memory** | `brain/episodic_memory.py` | Records event-outcome pairs; tracks per-tool success rates |
 | 🌟 **Purpose** | `brain/nova_purpose.py` | Nova's soul — 5 drives (morning, evening, weekly, curiosity, spontaneous) shape all proactive behavior |
 | 👁️ **Attention Engine** | `brain/attention_engine.py` | Purpose-driven proactive observations every 6h (morning brief, evening summary, curiosity scan) |
@@ -173,6 +173,7 @@ Third-party content (emails from others) is **summarised before storage**, never
 | ⚡ **Task Runner** | `core/task_runner.py` | DAG-based parallel execution; notifies Telegram on each step and on completion |
 | 🔍 **Critic Agent** | `brain/critic_agent.py` | Validates task output quality (score ≥ 0.75 to pass); triggers one LLM refinement pass if below threshold; fail-open |
 | 📚 **Reasoning Templates** | `brain/reasoning_template_library.py` | Stores successful goal→subtask decompositions in LanceDB; GoalDecomposer queries before each new task to reuse proven patterns |
+| ✅ **Pending Action Confirmation** | `brain/working_memory.py` + `conversation_manager.py` | Stores proposed actions ("shall I post this?") and executes on user confirmation ("yes") — fixes the re-draft loop |
 | 📊 **Intent Collector** | `brain/intent_data_collector.py` | Captures live intent labels as training data for future model fine-tuning |
 
 ---
@@ -222,7 +223,7 @@ Each wave runs via `asyncio.gather()`. Steps 1–3 execute concurrently, cutting
 
 ## 🔒 Security
 
-Nova applies **13 defence layers** to every message:
+Nova applies **18 defence layers** to every message:
 
 1. 🚦 Rate limiting per user
 2. 🧹 Input sanitization (length, encoding)
@@ -232,11 +233,16 @@ Nova applies **13 defence layers** to every message:
 6. 🚧 Policy Gate (read / write / irreversible risk classification)
 7. 📬 Durable Outbox (deduplication — no double sends)
 8. 🔍 Tool output injection guard
-9. ✅ Semantic relevance validation
+9. ✅ Semantic relevance validation (distance thresholds on all vector searches)
 10. 🧽 Output filtering (strip credentials, XML artefacts)
-11. 🚫 Bash command blocklist (rm -rf, sudo, etc.)
+11. 🚫 Bash command blocklist (rm -rf, sudo, reverse shells, encoding bypasses)
 12. ⚡ Circuit breaker (3 API failures → 2-minute cooldown)
 13. ☠️ Dead Letter Queue (poison events → Telegram alert after 3 retries)
+14. 🌐 SSRF protection (blocks private/internal network access from web tools)
+15. 📂 Directory confinement (file writes restricted to project root + /tmp)
+16. 🔐 Fail-closed channels (WhatsApp/Voice reject all if allow-list not configured)
+17. 🔑 Timing-safe auth (HMAC constant-time comparison for API keys)
+18. ☢️ Per-user state isolation (no cross-user context leakage)
 
 Risk and supervision are formally documented in [`RISKS.md`](../RISKS.md) and [`SUPERVISION.md`](../SUPERVISION.md).
 
@@ -555,6 +561,27 @@ rm ~/Library/LaunchAgents/com.nova.digitalclone.plist
 
 5. TaskRunner completes → reads file → sends full content to Telegram in chunks
 6. Audit saved: data/tasks/{id}_audit.json (per-step tokens, timing, success)
+```
+
+**"Draft a tweet about our product launch" → "yes"**
+
+```
+1. Telegram → Heart
+   Intent: action | tools: x_tool | background: no
+
+2. Heart → Agent (sonnet tier — composition + tool)
+
+3. Agent drafts tweet but doesn't post (high-stakes → confirm first)
+   → Response: "Here's a draft: '...' — shall I post it?"
+
+4. Heart → _detect_and_store_proposal()
+   → Pending action stored in WorkingMemory: {tool: x_tool, label: "post tweet"}
+
+5. User replies: "yes"
+
+6. Heart → _handle_pending_action_confirmation() [EARLY EXIT — skips intent routing]
+   → Pops pending action → Agent executes x_tool with stored parameters
+   → Response: "Posted! Here's the link: ..."
 ```
 
 ---
