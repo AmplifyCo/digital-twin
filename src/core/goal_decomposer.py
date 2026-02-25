@@ -23,13 +23,16 @@ _BOT_NAME = os.getenv("BOT_NAME", "Nova")
 
 # Note: uses .format() at runtime — {bot_name}, {tools}, {goal}, {task_id} are runtime variables
 _DECOMPOSE_PROMPT = """You are a task planner for an autonomous AI agent named {bot_name}.
-Your job: break a high-level goal into 3–7 concrete, sequential subtasks.
+Your job: break a high-level goal into 3–7 subtasks with explicit dependencies so independent work runs in parallel.
 
 RULES:
 1. Each subtask must be independently executable — it must have a clear single output
 2. No redundant subtasks — don't repeat the same search with different wording
 3. Max 7 subtasks total
-4. Subtasks must be in execution order (earlier results feed into later ones)
+4. Steps are 0-indexed. Use depends_on to declare which steps must finish first.
+   - Steps with no dependencies (depends_on: []) run immediately
+   - Steps with the same dependency set run in parallel automatically
+   - Example: A(0)→B(1),C(2) in parallel→D(3) means B and C both have depends_on:[0], D has depends_on:[1,2]
 5. The LAST subtask must always be a synthesis step: "Compile all findings into a file at ./data/tasks/{task_id}.txt and summarize in 3 bullet points"
 6. Use ONLY tools from the Available Tools list
 7. Assign model_tier: "flash" for searches/reads, "sonnet" for synthesis/writing
@@ -41,12 +44,12 @@ Available Tools: {tools}{tool_performance}
 Goal: {goal}
 
 Respond ONLY with a JSON array. No explanation, no markdown fences.
-Example format:
+Example format (step 0 first, then steps 1+2 run in parallel, step 3 waits for both):
 [
-  {{"description": "Search X for posts about OpenClaw using x_tool search_tweets", "tool_hints": ["x_tool"], "model_tier": "flash", "verification_criteria": "At least 3 relevant tweets returned", "reversible": true}},
-  {{"description": "Search web for 'OpenClaw autonomous agent flaws reviews 2025'", "tool_hints": ["web_search"], "model_tier": "flash", "verification_criteria": "Search returns results with relevant content", "reversible": true}},
-  {{"description": "Fetch the OpenClaw GitHub README from https://github.com/openclaw/openclaw", "tool_hints": ["web_fetch"], "model_tier": "flash", "verification_criteria": "Page content contains README text", "reversible": true}},
-  {{"description": "Compile all findings into ./data/tasks/{task_id}.txt with summary", "tool_hints": ["file_operations"], "model_tier": "sonnet", "verification_criteria": "File exists at ./data/tasks/{task_id}.txt with content", "reversible": true}}
+  {{"description": "Search X for posts about OpenClaw", "tool_hints": ["x_tool"], "model_tier": "flash", "verification_criteria": "At least 3 relevant tweets returned", "reversible": true, "depends_on": []}},
+  {{"description": "Search web for 'OpenClaw reviews 2025'", "tool_hints": ["web_search"], "model_tier": "flash", "verification_criteria": "Search returns relevant results", "reversible": true, "depends_on": [0]}},
+  {{"description": "Fetch the OpenClaw GitHub README", "tool_hints": ["web_fetch"], "model_tier": "flash", "verification_criteria": "Page content contains README text", "reversible": true, "depends_on": [0]}},
+  {{"description": "Compile all findings into ./data/tasks/{task_id}.txt with summary", "tool_hints": ["file_operations"], "model_tier": "sonnet", "verification_criteria": "File exists at ./data/tasks/{task_id}.txt with content", "reversible": true, "depends_on": [1, 2]}}
 ]"""
 
 # Fallback decomposition used when Gemini Flash is unavailable (built in _make_fallback)
@@ -178,6 +181,7 @@ class GoalDecomposer:
                     status="pending",
                     verification_criteria=item.get("verification_criteria", ""),
                     reversible=item.get("reversible", True),
+                    depends_on=item.get("depends_on", []),
                 ))
 
             # Ensure synthesis step mentions the task_id file path
@@ -203,6 +207,7 @@ class GoalDecomposer:
                 model_tier="flash",
                 verification_criteria="At least one search result or page content returned",
                 reversible=True,
+                depends_on=[],
             ),
             Subtask(
                 description=f"Compile all findings into ./data/tasks/{task_id}.txt and summarize in 3 bullet points",
@@ -210,6 +215,7 @@ class GoalDecomposer:
                 model_tier="sonnet",
                 verification_criteria=f"File exists at ./data/tasks/{task_id}.txt with content",
                 reversible=True,
+                depends_on=[0],
             ),
         ]
 

@@ -128,7 +128,7 @@ class TaskRunner:
             if task.notify_on_complete:
                 await self._notify_plan(task, subtasks)
 
-            # Step 3: Execute each subtask sequentially
+            # Step 3: Execute subtasks — sequential or parallel depending on subtask.parallel
             all_results = []
             num_subtasks = len(subtasks)
             delegation_log: List[Dict[str, Any]] = []  # Audit trail (#6)
@@ -136,59 +136,134 @@ class TaskRunner:
             task_start_time = time.time()
             budget_exceeded = False
 
-            for idx, subtask in enumerate(subtasks):
-                logger.info(f"Task {task.id}: executing subtask {idx+1}/{num_subtasks}: {subtask.description[:60]}")
-                self.task_queue.update_subtask(task.id, idx, "running")
+            # Group consecutive parallel subtasks into waves; each sequential subtask
+            # is its own wave of size 1.
+            waves = self._build_waves(subtasks)
 
-                # #3: Continuous authorization — re-read task status before each subtask.
-                # If the user cancelled via 'stop task', status will be 'failed'. Stop immediately.
+            for wave_start_idx, wave in waves:
+                # #3: Continuous authorization — re-check before every wave
                 fresh = self.task_queue.get_task(task.id)
                 if fresh and fresh.status == "failed":
-                    logger.info(f"Task {task.id}: cancelled externally before subtask {idx+1}, stopping")
+                    logger.info(f"Task {task.id}: cancelled externally before wave at step {wave_start_idx+1}, stopping")
                     raise asyncio.CancelledError("Task cancelled externally")
 
-                # Reversibility gate (#2): warn before irreversible subtasks
-                if not subtask.reversible:
-                    await self._notify_irreversible_gate(task, idx + 1, num_subtasks, subtask.description)
+                if len(wave) == 1:
+                    # ── Single sequential subtask ──────────────────────────
+                    idx = wave_start_idx
+                    subtask = wave[0]
+                    logger.info(f"Task {task.id}: executing step {idx+1}/{num_subtasks}: {subtask.description[:60]}")
+                    self.task_queue.update_subtask(task.id, idx, "running")
 
-                # Notify step is starting
-                if task.notify_on_complete:
-                    await self._notify_step_start(task, idx + 1, num_subtasks, subtask.description)
+                    # Reversibility gate (#2)
+                    if not subtask.reversible:
+                        await self._notify_irreversible_gate(task, idx + 1, num_subtasks, subtask.description)
 
-                step_start = datetime.utcnow().isoformat()
-                result = await self._execute_subtask(task, subtask, idx, all_results)
-                step_end = datetime.utcnow().isoformat()
+                    if task.notify_on_complete:
+                        await self._notify_step_start(task, idx + 1, num_subtasks, subtask.description)
 
-                # Adaptive re-delegation (#3): if step failed entirely, try alternative plan
-                re_delegated = False
-                if result.startswith("ERROR:"):
-                    alt_result = await self._try_adaptive_redelegate(task, subtask, idx, all_results, result)
-                    if alt_result and not alt_result.startswith("ERROR:"):
-                        result = alt_result
-                        re_delegated = True
-                        logger.info(f"Task {task.id}: subtask {idx+1} recovered via re-delegation")
+                    step_start = datetime.utcnow().isoformat()
+                    result = await self._execute_subtask(task, subtask, idx, all_results)
+                    step_end = datetime.utcnow().isoformat()
 
-                all_results.append(f"Step {idx+1}: {result}")
+                    # Adaptive re-delegation (#3)
+                    re_delegated = False
+                    if result.startswith("ERROR:"):
+                        alt_result = await self._try_adaptive_redelegate(task, subtask, idx, all_results, result)
+                        if alt_result and not alt_result.startswith("ERROR:"):
+                            result = alt_result
+                            re_delegated = True
+                            logger.info(f"Task {task.id}: step {idx+1} recovered via re-delegation")
 
-                failed = result.startswith("ERROR:")
-                if failed and idx < num_subtasks - 1:
-                    logger.warning(f"Subtask {idx+1} failed, continuing: {result}")
-                    self.task_queue.update_subtask(task.id, idx, "failed", error=result)
+                    all_results.append(f"Step {idx+1}: {result}")
+                    failed = result.startswith("ERROR:")
+                    if failed and idx < num_subtasks - 1:
+                        logger.warning(f"Step {idx+1} failed, continuing: {result}")
+                        self.task_queue.update_subtask(task.id, idx, "failed", error=result)
+                    else:
+                        self.task_queue.update_subtask(task.id, idx, "done", result=result[:500])
+
+                    await self._record_subtask_episode(subtask, result, failed)
+
+                    subtask_tokens = getattr(self.agent, "last_run_tokens", 0)
+                    total_tokens += subtask_tokens
+
+                    delegation_log.append({
+                        "step": idx + 1,
+                        "description": subtask.description,
+                        "tool_hints": subtask.tool_hints,
+                        "verification_criteria": subtask.verification_criteria,
+                        "reversible": subtask.reversible,
+                        "depends_on": subtask.depends_on,
+                        "started_at": step_start,
+                        "completed_at": step_end,
+                        "success": not failed,
+                        "re_delegated": re_delegated,
+                        "tokens": subtask_tokens,
+                        "outcome": result[:300],
+                    })
+
+                    if task.notify_on_complete:
+                        await self._notify_step_done(task, idx + 1, num_subtasks, result, failed)
+
                 else:
-                    self.task_queue.update_subtask(task.id, idx, "done", result=result[:500])
+                    # ── Parallel wave: run all steps concurrently ──────────
+                    step_nums = list(range(wave_start_idx + 1, wave_start_idx + len(wave) + 1))
+                    logger.info(
+                        f"Task {task.id}: running steps {step_nums[0]}–{step_nums[-1]} in parallel "
+                        f"({len(wave)} subtasks)"
+                    )
 
-                # Record episodic memory for tool performance tracking (#4)
-                await self._record_subtask_episode(subtask, result, failed)
+                    for i, subtask in enumerate(wave):
+                        self.task_queue.update_subtask(task.id, wave_start_idx + i, "running")
 
-                # ── Task budget check (systemic resilience) ──────────────────
-                subtask_tokens = getattr(self.agent, "last_run_tokens", 0)
-                total_tokens += subtask_tokens
+                    if task.notify_on_complete:
+                        wave_desc = " | ".join(self._safe(st.description, 40) for st in wave)
+                        await self.telegram.notify(
+                            f"⚡ Running {len(wave)} steps in parallel: {wave_desc}", level="info"
+                        )
+
+                    wave_start_ts = datetime.utcnow().isoformat()
+                    wave_results = await self._execute_parallel_wave(task, wave, wave_start_idx, all_results)
+                    wave_end_ts = datetime.utcnow().isoformat()
+
+                    # Tokens for a parallel wave: estimate from output length (agent._run_tokens
+                    # is not reliable across concurrent runs on the same instance)
+                    wave_tokens = sum(len(r) // 3 for _, _, r, _ in wave_results)
+                    total_tokens += wave_tokens
+
+                    for i, (idx, subtask, result, re_delegated) in enumerate(wave_results):
+                        all_results.append(f"Step {idx+1}: {result}")
+                        failed = result.startswith("ERROR:")
+                        if failed and idx < num_subtasks - 1:
+                            self.task_queue.update_subtask(task.id, idx, "failed", error=result)
+                        else:
+                            self.task_queue.update_subtask(task.id, idx, "done", result=result[:500])
+                        await self._record_subtask_episode(subtask, result, failed)
+
+                        delegation_log.append({
+                            "step": idx + 1,
+                            "description": subtask.description,
+                            "tool_hints": subtask.tool_hints,
+                            "verification_criteria": subtask.verification_criteria,
+                            "reversible": subtask.reversible,
+                            "depends_on": subtask.depends_on,
+                            "started_at": wave_start_ts,
+                            "completed_at": wave_end_ts,
+                            "success": not failed,
+                            "re_delegated": re_delegated,
+                            "tokens": len(result) // 3,
+                            "outcome": result[:300],
+                        })
+
+                        if task.notify_on_complete:
+                            await self._notify_step_done(task, idx + 1, num_subtasks, result, failed)
+
+                # ── Budget check after every wave ──────────────────────────
                 elapsed = time.time() - task_start_time
-
                 if total_tokens > self.MAX_TASK_TOKENS:
                     logger.warning(
                         f"Task {task.id}: token budget exceeded "
-                        f"({total_tokens:,} > {self.MAX_TASK_TOKENS:,}) after step {idx+1}"
+                        f"({total_tokens:,} > {self.MAX_TASK_TOKENS:,})"
                     )
                     await self._notify_budget_exceeded(task, "token", total_tokens, elapsed)
                     budget_exceeded = True
@@ -197,30 +272,11 @@ class TaskRunner:
                 if elapsed > self.MAX_TASK_WALL_SECONDS:
                     logger.warning(
                         f"Task {task.id}: wall-time budget exceeded "
-                        f"({elapsed/60:.1f} min > {self.MAX_TASK_WALL_SECONDS/60:.0f} min) after step {idx+1}"
+                        f"({elapsed/60:.1f} min > {self.MAX_TASK_WALL_SECONDS/60:.0f} min)"
                     )
                     await self._notify_budget_exceeded(task, "time", total_tokens, elapsed)
                     budget_exceeded = True
                     break
-
-                # Build audit trail entry (#6)
-                delegation_log.append({
-                    "step": idx + 1,
-                    "description": subtask.description,
-                    "tool_hints": subtask.tool_hints,
-                    "verification_criteria": subtask.verification_criteria,
-                    "reversible": subtask.reversible,
-                    "started_at": step_start,
-                    "completed_at": step_end,
-                    "success": not failed,
-                    "re_delegated": re_delegated,
-                    "tokens": subtask_tokens,
-                    "outcome": result[:300],
-                })
-
-                # Notify step outcome
-                if task.notify_on_complete:
-                    await self._notify_step_done(task, idx + 1, num_subtasks, result, failed)
 
             # Step 3: Critic validation — evaluate quality before delivery
             critic_score = 0.8  # default if critic unavailable
@@ -270,6 +326,76 @@ class TaskRunner:
                 await self._notify_failure(task, str(e))
         finally:
             self._current_task_id = None
+
+    @staticmethod
+    def _build_waves(subtasks: List) -> List[tuple]:
+        """Group subtasks into ordered execution waves using their depends_on graph.
+
+        Returns a list of (start_index, [subtask, ...]) tuples.
+
+        Algorithm: assign each subtask to the earliest wave where all its
+        dependencies are already in earlier waves. Subtasks in the same wave
+        have no dependency between them and can run in parallel.
+
+        Example — A(0) → B(1), C(2) → D(3):
+          Wave 0: [A]       (depends_on=[])
+          Wave 1: [B, C]    (both depends_on=[0])
+          Wave 2: [D]       (depends_on=[1,2])
+        """
+        n = len(subtasks)
+        wave_assignment = [-1] * n
+
+        for i, st in enumerate(subtasks):
+            deps = getattr(st, "depends_on", [])
+            if not deps:
+                wave_assignment[i] = 0
+            else:
+                # Place in the wave after the latest dependency
+                max_dep_wave = max(
+                    (wave_assignment[d] for d in deps if 0 <= d < n and wave_assignment[d] >= 0),
+                    default=-1
+                )
+                wave_assignment[i] = max_dep_wave + 1
+
+        # Group by wave number preserving original order within each wave
+        waves_dict: Dict[int, List[tuple]] = {}
+        for i, st in enumerate(subtasks):
+            w = wave_assignment[i]
+            waves_dict.setdefault(w, []).append((i, st))
+
+        result = []
+        for w in sorted(waves_dict.keys()):
+            members = waves_dict[w]
+            start_idx = members[0][0]
+            sts = [st for _, st in members]
+            result.append((start_idx, sts))
+
+        return result
+
+    async def _execute_parallel_wave(
+        self,
+        task: Task,
+        wave: List,
+        start_idx: int,
+        prior_results: List[str],
+    ) -> List[tuple]:
+        """Execute multiple independent subtasks concurrently via asyncio.gather.
+
+        Returns list of (idx, subtask, result_str, re_delegated_bool).
+        """
+        async def _run_one(idx: int, subtask) -> tuple:
+            result = await self._execute_subtask(task, subtask, idx, prior_results)
+            re_delegated = False
+            if result.startswith("ERROR:"):
+                alt = await self._try_adaptive_redelegate(task, subtask, idx, prior_results, result)
+                if alt and not alt.startswith("ERROR:"):
+                    result = alt
+                    re_delegated = True
+                    logger.info(f"Task {task.id}: step {idx+1} (parallel) recovered via re-delegation")
+            return idx, subtask, result, re_delegated
+
+        coros = [_run_one(start_idx + i, st) for i, st in enumerate(wave)]
+        return await asyncio.gather(*coros, return_exceptions=False)
 
     async def _execute_subtask(self, task: Task, subtask, idx: int, prior_results: list) -> str:
         """Execute a single subtask via agent.run() and return the result string."""

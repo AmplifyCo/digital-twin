@@ -28,8 +28,9 @@ class Subtask:
     status: str = "pending"   # pending | running | done | failed | skipped
     result: str = ""
     error: str = ""
-    verification_criteria: str = ""  # How to confirm this step actually succeeded
-    reversible: bool = True          # False = cannot be undone (send email, post tweet, delete)
+    verification_criteria: str = ""       # How to confirm this step actually succeeded
+    reversible: bool = True               # False = cannot be undone (send email, post tweet, delete)
+    depends_on: List[int] = field(default_factory=list)  # 0-indexed step indices this must wait for
 
 
 @dataclass
@@ -75,6 +76,7 @@ class Task:
                     "error": st.error,
                     "verification_criteria": st.verification_criteria,
                     "reversible": st.reversible,
+                    "depends_on": st.depends_on,
                 }
                 for st in self.subtasks
             ],
@@ -289,6 +291,7 @@ class TaskQueue:
                 error=s.get("error", ""),
                 verification_criteria=s.get("verification_criteria", ""),
                 reversible=s.get("reversible", True),
+                depends_on=s.get("depends_on", []),
             )
             for s in subtask_dicts
         ]
