@@ -15,6 +15,7 @@ Flow per task:
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,8 +33,15 @@ class TaskRunner:
     decomposes + executes it via the existing agent.run() ReAct loop.
     """
 
-    CHECK_INTERVAL = 15  # seconds between queue polls
-    MAX_SUBTASK_RETRIES = 3  # Increased retries for robustness
+    CHECK_INTERVAL = 15       # seconds between queue polls
+    MAX_SUBTASK_RETRIES = 3   # retries per subtask
+
+    # ── Task budget limits (systemic resilience) ──────────────────────────────
+    # A task that drifts beyond these bounds is stopped and partial results delivered.
+    # Tokens: ~200k covers 3–5 research subtasks with generous context windows.
+    # Wall time: 30 min is ample; runaway tasks are a sign of a planning failure.
+    MAX_TASK_TOKENS = 200_000   # cumulative tokens across all subtasks
+    MAX_TASK_WALL_SECONDS = 1800  # 30 minutes absolute wall-clock cap
 
     def __init__(
         self,
@@ -124,6 +132,9 @@ class TaskRunner:
             all_results = []
             num_subtasks = len(subtasks)
             delegation_log: List[Dict[str, Any]] = []  # Audit trail (#6)
+            total_tokens = 0
+            task_start_time = time.time()
+            budget_exceeded = False
 
             for idx, subtask in enumerate(subtasks):
                 logger.info(f"Task {task.id}: executing subtask {idx+1}/{num_subtasks}: {subtask.description[:60]}")
@@ -169,6 +180,29 @@ class TaskRunner:
                 # Record episodic memory for tool performance tracking (#4)
                 await self._record_subtask_episode(subtask, result, failed)
 
+                # ── Task budget check (systemic resilience) ──────────────────
+                subtask_tokens = getattr(self.agent, "last_run_tokens", 0)
+                total_tokens += subtask_tokens
+                elapsed = time.time() - task_start_time
+
+                if total_tokens > self.MAX_TASK_TOKENS:
+                    logger.warning(
+                        f"Task {task.id}: token budget exceeded "
+                        f"({total_tokens:,} > {self.MAX_TASK_TOKENS:,}) after step {idx+1}"
+                    )
+                    await self._notify_budget_exceeded(task, "token", total_tokens, elapsed)
+                    budget_exceeded = True
+                    break
+
+                if elapsed > self.MAX_TASK_WALL_SECONDS:
+                    logger.warning(
+                        f"Task {task.id}: wall-time budget exceeded "
+                        f"({elapsed/60:.1f} min > {self.MAX_TASK_WALL_SECONDS/60:.0f} min) after step {idx+1}"
+                    )
+                    await self._notify_budget_exceeded(task, "time", total_tokens, elapsed)
+                    budget_exceeded = True
+                    break
+
                 # Build audit trail entry (#6)
                 delegation_log.append({
                     "step": idx + 1,
@@ -180,6 +214,7 @@ class TaskRunner:
                     "completed_at": step_end,
                     "success": not failed,
                     "re_delegated": re_delegated,
+                    "tokens": subtask_tokens,
                     "outcome": result[:300],
                 })
 
@@ -446,6 +481,33 @@ class TaskRunner:
             except Exception as e:
                 logger.warning(f"WhatsApp failure notification failed: {e}")
 
+    async def _notify_budget_exceeded(
+        self,
+        task: Task,
+        budget_type: str,
+        total_tokens: Optional[int],
+        elapsed: Optional[float],
+    ):
+        """Notify user when a task's token or wall-time budget is exceeded.
+
+        Partial results collected so far are still delivered via the normal
+        completion path — the caller sets budget_exceeded=True to skip
+        remaining subtasks and proceed to summary + notification.
+        """
+        if budget_type == "token":
+            detail = f"{total_tokens:,} tokens used (limit: {self.MAX_TASK_TOKENS:,})"
+        else:
+            detail = f"{elapsed/60:.1f} min elapsed (limit: {self.MAX_TASK_WALL_SECONDS//60} min)"
+
+        msg = (
+            f"⏱ Task budget reached for: {self._safe(task.goal, 60)}\n"
+            f"{detail} — stopping here and delivering partial results."
+        )
+        try:
+            await self.telegram.notify(msg, level="warning")
+        except Exception as e:
+            logger.warning(f"Budget-exceeded notification failed: {e}")
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _build_summary(self, goal: str, results: list) -> str:
@@ -589,6 +651,7 @@ class TaskRunner:
             "successful_steps": sum(1 for s in delegation_log if s["success"]),
             "re_delegated_steps": sum(1 for s in delegation_log if s["re_delegated"]),
             "irreversible_steps": sum(1 for s in delegation_log if not s["reversible"]),
+            "total_tokens": sum(s.get("tokens", 0) for s in delegation_log),
             "steps": delegation_log,
         }
         audit_path = Path(f"./data/tasks/{task.id}_audit.json")

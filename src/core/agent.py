@@ -63,6 +63,9 @@ class AutonomousAgent:
         # Nervous System: state machine for tracking execution state + cancellation
         self.state_machine = AgentStateMachine()
 
+        # Token budget tracking — reset at the start of each run() call
+        self._run_tokens: int = 0
+
         # Self-Improvement System
         # Temporarily paused as per user request
         # self.auto_fixer = AutoFixer(llm_client=self.gemini_client or self.api_client)
@@ -102,6 +105,7 @@ class AutonomousAgent:
         # Store current task for semantic validation (Layer 11)
         self._current_task = task
         self._model_tier = model_tier
+        self._run_tokens = 0  # reset per-run token counter
 
         # Reset state machine + policy gate for new run
         self.state_machine.reset()
@@ -154,6 +158,14 @@ class AutonomousAgent:
                     max_tokens=4096,
                     model_tier=model_tier
                 )
+
+                # Accumulate token usage for budget monitoring
+                try:
+                    if hasattr(response, "usage") and response.usage:
+                        self._run_tokens += getattr(response.usage, "input_tokens", 0)
+                        self._run_tokens += getattr(response.usage, "output_tokens", 0)
+                except Exception:
+                    pass
 
                 # Process response
                 if response.stop_reason == "end_turn":
@@ -237,6 +249,15 @@ class AutonomousAgent:
     MODEL_GEMINI_PRO = "gemini/gemini-2.5-pro"
     MODEL_CLAUDE_SONNET = "anthropic/claude-sonnet-4-5"
     MODEL_CLAUDE_HAIKU = "anthropic/claude-haiku-4-5"
+
+    @property
+    def last_run_tokens(self) -> int:
+        """Total tokens consumed by the most recent run() call.
+
+        Accumulated from every _call_llm() iteration within that run.
+        Used by TaskRunner to enforce per-task token budgets.
+        """
+        return self._run_tokens
 
     async def _call_llm(
         self,
