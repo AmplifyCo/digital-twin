@@ -1447,14 +1447,43 @@ User says "good morning" → none"""
         result["_conversation_history"] = conversation_history
         return result
 
+    async def _compress_turn_text(self, text: str, limit: int) -> str:
+        """Summarize long text using Gemini Flash; fall back to truncation.
+
+        Summaries are cheap (Gemini Flash, ~50 tokens out) and cached on the
+        turn dict so they are only computed once per turn.
+        """
+        if len(text) <= limit:
+            return text
+        # Try Gemini Flash summarization
+        if self.gemini_client and self.gemini_client.enabled:
+            try:
+                prompt = (
+                    f"Summarize the following in 1-2 sentences, preserving all key facts, "
+                    f"names, numbers, and decisions:\n\n{text}"
+                )
+                resp = await self.gemini_client.create_message(
+                    model="gemini/gemini-2.0-flash",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=120,
+                )
+                summary = resp.get("content", "").strip() if isinstance(resp, dict) else str(resp).strip()
+                if summary:
+                    return f"[summary] {summary}"
+            except Exception as e:
+                logger.debug(f"Turn summarization failed, using truncation: {e}")
+        # Fallback: truncate
+        return text[:limit] + "…"
+
     async def _get_recent_history_for_intent(self) -> str:
         """Get recent conversation history formatted for intent classification.
 
         Uses the per-user in-memory conversation buffer (reliable, chronological)
         instead of ChromaDB semantic search (which is NOT chronological).
+        Long turns are summarized via Gemini Flash and cached on the turn dict.
 
         Returns:
-            Formatted conversation history string (last 7 turns for current user)
+            Formatted conversation history string (last 15 turns for current user)
         """
         # PRIMARY: Per-user in-memory buffer (instant, correct order, isolated)
         current_user = getattr(self, '_current_user_id', None) or 'default'
@@ -1467,9 +1496,14 @@ User says "good morning" → none"""
                 user_msg = turn.get("user_message", "")
                 bot_msg = turn.get("assistant_response", "")
                 if user_msg:
-                    history_lines.append(f"User: {user_msg[:200]}")
+                    # Use cached summary if already computed, else compress now
+                    if "user_compressed" not in turn:
+                        turn["user_compressed"] = await self._compress_turn_text(user_msg, 200)
+                    history_lines.append(f"User: {turn['user_compressed']}")
                 if bot_msg:
-                    history_lines.append(f"{self.bot_name}: {bot_msg[:600]}")
+                    if "bot_compressed" not in turn:
+                        turn["bot_compressed"] = await self._compress_turn_text(bot_msg, 600)
+                    history_lines.append(f"{self.bot_name}: {turn['bot_compressed']}")
             if history_lines:
                 return "\n".join(history_lines)
 
@@ -1492,9 +1526,9 @@ User says "good morning" → none"""
                 user_msg = turn.get("user_message", "")
                 bot_msg = turn.get("assistant_response", "")
                 if user_msg:
-                    history_lines.append(f"User: {user_msg[:200]}")
+                    history_lines.append(f"User: {await self._compress_turn_text(user_msg, 200)}")
                 if bot_msg:
-                    history_lines.append(f"{self.bot_name}: {bot_msg[:600]}")
+                    history_lines.append(f"{self.bot_name}: {await self._compress_turn_text(bot_msg, 600)}")
 
             return "\n".join(history_lines)
         except Exception as e:
