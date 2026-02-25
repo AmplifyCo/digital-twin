@@ -525,17 +525,22 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             logger.warning("TaskRunner skipped (Telegram not configured — task_queue unavailable)")
 
         # Start AttentionEngine (proactive observations every 6h — driven by NovaPurpose)
-        _gemini_for_attention = gemini_client if 'gemini_client' in locals() else None
-        _nova_purpose = NovaPurpose()
-        _attention_engine = AttentionEngine(
-            digital_brain=digital_brain,
-            llm_client=_gemini_for_attention,
-            telegram_notifier=telegram,
-            owner_name=config.owner_name,
-            purpose=_nova_purpose,
-        )
-        attention_task = asyncio.create_task(_attention_engine.start())
-        logger.info("🔍 AttentionEngine started (proactive observations every 6h)")
+        # Disabled by default — enable by setting ATTENTION_ENGINE_ENABLED=true in .env
+        attention_task = None
+        if os.getenv("ATTENTION_ENGINE_ENABLED", "false").lower() == "true":
+            _gemini_for_attention = gemini_client if 'gemini_client' in locals() else None
+            _nova_purpose = NovaPurpose()
+            _attention_engine = AttentionEngine(
+                digital_brain=digital_brain,
+                llm_client=_gemini_for_attention,
+                telegram_notifier=telegram,
+                owner_name=config.owner_name,
+                purpose=_nova_purpose,
+            )
+            attention_task = asyncio.create_task(_attention_engine.start())
+            logger.info("🔍 AttentionEngine started (proactive observations every 6h)")
+        else:
+            logger.info("🔍 AttentionEngine disabled (set ATTENTION_ENGINE_ENABLED=true to enable)")
 
         # Show Telegram info
         if telegram.enabled:
@@ -562,15 +567,21 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         reminder_task = asyncio.create_task(reminder_scheduler.start())
 
         # Start self-healing monitor background task
+        # Auto-fix disabled by default — enable by setting SELF_HEALING_ENABLED=true in .env
+        _self_healing_enabled = os.getenv("SELF_HEALING_ENABLED", "false").lower() == "true"
         self_healing = SelfHealingMonitor(
             telegram_notifier=telegram,
             check_interval=3600,  # 1 hour
             log_file=str(LOG_DIR / "agent.log"),
-            auto_fix_enabled=True,
-            llm_client=gemini_client,  # Enable AI-powered fixes
-            tool_registry=agent.tools  # Enable capability gap fixing
+            auto_fix_enabled=_self_healing_enabled,
+            llm_client=gemini_client if _self_healing_enabled else None,
+            tool_registry=agent.tools if _self_healing_enabled else None
         )
         self_healing_task = asyncio.create_task(self_healing.start())
+        if _self_healing_enabled:
+            logger.info("🔧 Self-healing monitor started with auto-fix ENABLED")
+        else:
+            logger.info("🔧 Self-healing monitor started (gap detection only, auto-fix disabled)")
 
         # Start memory consolidation background task
         memory_consolidator = MemoryConsolidator(
