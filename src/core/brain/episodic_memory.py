@@ -12,7 +12,7 @@ No raw message content stored — only outcome summaries (trimmed to 200 chars).
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .vector_db import VectorDatabase
 
@@ -130,6 +130,46 @@ class EpisodicMemory:
             if not r["metadata"].get("success", True)
             and r["metadata"].get("tool_used") == tool
         ][:n]
+
+    async def get_tool_success_rates(self) -> Dict[str, Dict]:
+        """Return success rate per tool computed from all recorded episodes.
+
+        Used by GoalDecomposer to prefer reliable tools and avoid flaky ones.
+
+        Returns:
+            Dict mapping tool_name → {"total": int, "rate": float}
+            Only tools with ≥3 recorded uses are included (enough data to be meaningful).
+        """
+        try:
+            results = await self.db.search(
+                query="tool execution task step",
+                n_results=500,
+                filter_metadata={"type": "episode"}
+            )
+        except Exception as e:
+            logger.debug(f"get_tool_success_rates search failed: {e}")
+            return {}
+
+        counts: Dict[str, Dict] = {}
+        for r in results:
+            meta = r.get("metadata", {})
+            tool = meta.get("tool_used", "unknown")
+            if tool == "unknown":
+                continue
+            if tool not in counts:
+                counts[tool] = {"total": 0, "successes": 0}
+            counts[tool]["total"] += 1
+            if meta.get("success", True):
+                counts[tool]["successes"] += 1
+
+        return {
+            tool: {
+                "total": v["total"],
+                "rate": v["successes"] / v["total"],
+            }
+            for tool, v in counts.items()
+            if v["total"] >= 3
+        }
 
 
 def confidence_label(score: float) -> str:

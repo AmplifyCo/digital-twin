@@ -854,6 +854,11 @@ class ConversationManager:
             # Use raw_contact (actual phone number) as notification address when available,
             # so WhatsApp task completion notifications route correctly.
             notification_address = getattr(self, '_current_raw_contact', '') or user_id
+
+            # ── Dynamic cognitive friction (#5) ──────────────────────────────
+            # If the task involves irreversible actions (send, post, delete, buy),
+            # surface a risk note in the confirmation so user is informed upfront.
+            risk_level, risk_actions = self._estimate_task_risk(goal, intent)
             task_id = self.task_queue.enqueue(goal=goal, channel=channel, user_id=notification_address)
 
             # Update nova_task tool context so it knows the current user
@@ -862,13 +867,18 @@ class ConversationManager:
                 nova_tool.set_context(channel=channel, user_id=notification_address)
 
             pending = self.task_queue.get_pending_count()
-            logger.info(f"Background task enqueued: {task_id} — {goal[:60]}")
-            return (
+            logger.info(f"Background task enqueued: {task_id} (risk={risk_level}) — {goal[:60]}")
+
+            base_msg = (
                 f"Got it — this will take some research across multiple sources. "
                 f"I've queued it for background processing (task {task_id}). "
-                f"You'll get a WhatsApp notification with the full report when it's done. "
+                f"You'll get a notification with the full report when it's done. "
                 f"({pending} task(s) queued)"
             )
+            if risk_level == "high":
+                risk_note = f" Note: this task involves irreversible actions ({', '.join(risk_actions)}). I'll warn you on Telegram before each one — reply 'stop task' to cancel."
+                base_msg += risk_note
+            return base_msg
 
         # Build enriched execution plan:
         # Intent (what to do) + Tool hints (which tools) + Memory (context) → agent task
@@ -1823,6 +1833,66 @@ Additional Examples for Background:
                 self.working_memory.set_calibration(directive)
                 logger.info(f"Calibration stored: {directive[:60]}")
                 break
+
+    def _estimate_task_risk(self, goal: str, intent: Dict[str, Any]):
+        """#5 Dynamic cognitive friction — estimate risk level of a background task.
+
+        Checks tool hints against the PolicyGate risk map to detect irreversible
+        operations (send email, post tweet, delete). Returns (risk_level, actions).
+
+        Returns:
+            Tuple of (risk_level: str, actions: List[str])
+            risk_level: "high" | "medium" | "low"
+            actions: list of irreversible action names detected
+        """
+        try:
+            from .nervous_system.policy_gate import TOOL_RISK_MAP, RiskLevel
+        except ImportError:
+            return "low", []
+
+        tool_hints = intent.get("tool_hints", [])
+        goal_lower = goal.lower()
+
+        # Keyword signals for irreversible intent in the goal text
+        irreversible_keywords = {
+            "send email": "send email", "reply email": "reply email",
+            "post tweet": "post to X", "tweet": "post to X",
+            "post to community": "post to X community",
+            "delete": "delete", "remove": "delete",
+            "buy": "purchase", "purchase": "purchase", "order": "purchase",
+        }
+
+        found_actions = []
+
+        # Check tool hints against risk map
+        for tool in tool_hints:
+            tool_map = TOOL_RISK_MAP.get(tool, {})
+            irreversible_ops = [
+                op for op, risk in tool_map.items()
+                if op != "_default" and risk == RiskLevel.IRREVERSIBLE
+            ]
+            if irreversible_ops:
+                found_actions.extend(irreversible_ops)
+            elif tool_map.get("_default") == RiskLevel.IRREVERSIBLE:
+                found_actions.append(tool)
+
+        # Check goal text for irreversible keywords
+        for keyword, label in irreversible_keywords.items():
+            if keyword in goal_lower and label not in found_actions:
+                found_actions.append(label)
+
+        if found_actions:
+            return "high", list(dict.fromkeys(found_actions))  # deduplicated
+
+        # Multiple write tools = medium risk
+        write_tools = [
+            t for t in tool_hints
+            if TOOL_RISK_MAP.get(t, {}).get("_default") == RiskLevel.WRITE
+        ]
+        if len(write_tools) > 1:
+            return "medium", []
+
+        return "low", []
 
     def _is_background_task(self, message: str, intent: Dict[str, Any]) -> bool:
         """Return True if this task should be queued for background execution.

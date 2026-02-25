@@ -13,12 +13,13 @@ Flow per task:
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
-from .task_queue import Task, TaskQueue
+from .task_queue import Task, TaskQueue, Subtask
 from .goal_decomposer import GoalDecomposer
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class TaskRunner:
         critic=None,                 # CriticAgent (validates results before delivery)
         template_library=None,       # ReasoningTemplateLibrary (stores successful decompositions)
         owner_whatsapp_number: str = "",  # Fallback WhatsApp number from .env for task notifications
+        episodic_memory=None,        # EpisodicMemory (for tool performance tracking)
     ):
         self.task_queue = task_queue
         self.goal_decomposer = goal_decomposer
@@ -55,6 +57,7 @@ class TaskRunner:
         self.critic = critic
         self.template_library = template_library
         self.owner_whatsapp_number = owner_whatsapp_number
+        self.episodic_memory = episodic_memory
         self._running = False
         self._current_task_id: Optional[str] = None
         Path("./data/tasks").mkdir(parents=True, exist_ok=True)
@@ -92,12 +95,21 @@ class TaskRunner:
             logger.warning(f"Task-started notification failed: {e}")
 
         try:
-            # Step 1: Decompose into subtasks
+            # Step 1: Fetch tool performance from episodic memory (#4)
+            tool_performance = None
+            if self.episodic_memory:
+                try:
+                    tool_performance = await self.episodic_memory.get_tool_success_rates()
+                except Exception as e:
+                    logger.debug(f"Could not fetch tool performance: {e}")
+
+            # Step 2: Decompose into subtasks (with tool performance context)
             available_tools = list(self.agent.tools.tools.keys()) if hasattr(self.agent, 'tools') else []
             subtasks = await self.goal_decomposer.decompose(
                 goal=task.goal,
                 task_id=task.id,
                 available_tools=available_tools,
+                tool_performance=tool_performance,
             )
             self.task_queue.set_subtasks(task.id, subtasks)
             task.subtasks = subtasks
@@ -108,27 +120,61 @@ class TaskRunner:
             if task.notify_on_complete:
                 await self._notify_plan(task, subtasks)
 
-            # Step 2: Execute each subtask sequentially
+            # Step 3: Execute each subtask sequentially
             all_results = []
             num_subtasks = len(subtasks)
+            delegation_log: List[Dict[str, Any]] = []  # Audit trail (#6)
+
             for idx, subtask in enumerate(subtasks):
                 logger.info(f"Task {task.id}: executing subtask {idx+1}/{num_subtasks}: {subtask.description[:60]}")
                 self.task_queue.update_subtask(task.id, idx, "running")
+
+                # Reversibility gate (#2): warn before irreversible subtasks
+                if not subtask.reversible:
+                    await self._notify_irreversible_gate(task, idx + 1, num_subtasks, subtask.description)
 
                 # Notify step is starting
                 if task.notify_on_complete:
                     await self._notify_step_start(task, idx + 1, num_subtasks, subtask.description)
 
+                step_start = datetime.utcnow().isoformat()
                 result = await self._execute_subtask(task, subtask, idx, all_results)
+                step_end = datetime.utcnow().isoformat()
+
+                # Adaptive re-delegation (#3): if step failed entirely, try alternative plan
+                re_delegated = False
+                if result.startswith("ERROR:"):
+                    alt_result = await self._try_adaptive_redelegate(task, subtask, idx, all_results, result)
+                    if alt_result and not alt_result.startswith("ERROR:"):
+                        result = alt_result
+                        re_delegated = True
+                        logger.info(f"Task {task.id}: subtask {idx+1} recovered via re-delegation")
+
                 all_results.append(f"Step {idx+1}: {result}")
 
                 failed = result.startswith("ERROR:")
                 if failed and idx < num_subtasks - 1:
-                    # Non-synthesis step failed — continue (later steps may still work)
                     logger.warning(f"Subtask {idx+1} failed, continuing: {result}")
                     self.task_queue.update_subtask(task.id, idx, "failed", error=result)
                 else:
                     self.task_queue.update_subtask(task.id, idx, "done", result=result[:500])
+
+                # Record episodic memory for tool performance tracking (#4)
+                await self._record_subtask_episode(subtask, result, failed)
+
+                # Build audit trail entry (#6)
+                delegation_log.append({
+                    "step": idx + 1,
+                    "description": subtask.description,
+                    "tool_hints": subtask.tool_hints,
+                    "verification_criteria": subtask.verification_criteria,
+                    "reversible": subtask.reversible,
+                    "started_at": step_start,
+                    "completed_at": step_end,
+                    "success": not failed,
+                    "re_delegated": re_delegated,
+                    "outcome": result[:300],
+                })
 
                 # Notify step outcome
                 if task.notify_on_complete:
@@ -157,11 +203,14 @@ class TaskRunner:
                 except Exception as e:
                     logger.warning(f"Task {task.id}: template store failed: {e}")
 
-            # Step 5: Build summary from results
+            # Step 6: Build summary from results
             summary = self._build_summary(task.goal, all_results)
             self.task_queue.mark_done(task.id, result=summary)
 
-            # Step 4: Notify user
+            # Save delegation audit trail (#6)
+            await self._save_delegation_audit(task, delegation_log)
+
+            # Step 7: Notify user
             if task.notify_on_complete:
                 await self._notify_user(task, summary)
 
@@ -200,6 +249,10 @@ class TaskRunner:
         # Add tool hints as guidance
         if subtask.tool_hints:
             task_prompt += f"\n\nSuggested tools for this step: {', '.join(subtask.tool_hints)}"
+
+        # Add verification criteria so the agent knows what "done" looks like (#1)
+        if subtask.verification_criteria:
+            task_prompt += f"\n\nSuccess criterion: {subtask.verification_criteria}"
 
         # Use 'sonnet' tier for synthesis (last step), 'flash' for everything else
         model_tier = "sonnet"  # Use better model for all subtasks to reduce failures
@@ -275,8 +328,14 @@ class TaskRunner:
 
     async def _notify_plan(self, task: Task, subtasks: list):
         """Send a compact numbered plan after decomposition."""
-        steps = " | ".join(f"{i}. {self._safe(st.description, 40)}" for i, st in enumerate(subtasks, 1))
+        irreversible_count = sum(1 for st in subtasks if not st.reversible)
+        steps = " | ".join(
+            f"{i}. {'⚠️ ' if not st.reversible else ''}{self._safe(st.description, 40)}"
+            for i, st in enumerate(subtasks, 1)
+        )
         msg = f"📋 {len(subtasks)} steps: {steps}"
+        if irreversible_count:
+            msg += f"\n⚠️ {irreversible_count} irreversible step(s) — reply 'stop task' to cancel before they run."
         try:
             await self.telegram.notify(msg, level="info")
         except Exception as e:
@@ -408,3 +467,124 @@ class TaskRunner:
             "current_task": self._current_task_id,
             "pending_tasks": self.task_queue.get_pending_count(),
         }
+
+    # ── Delegation framework helpers (from Intelligent AI Delegation paper) ──
+
+    async def _notify_irreversible_gate(self, task: Task, step: int, total: int, description: str):
+        """#2: Warn user before an irreversible subtask executes.
+
+        Sends a Telegram alert so the user can send 'stop task' to cancel
+        if the action isn't what they intended. No artificial delay — the
+        existing interrupt mechanism handles cancellation in real-time.
+        """
+        msg = (
+            f"⚠️ [{step}/{total}] About to take an *irreversible* action:\n"
+            f"{self._safe(description, 120)}\n\n"
+            f"_Reply 'stop task' to cancel before this runs._"
+        )
+        try:
+            await self.telegram.notify(msg, level="warning")
+            # Brief pause to give user a chance to react
+            await asyncio.sleep(10)
+        except Exception as e:
+            logger.warning(f"Irreversibility gate notification failed: {e}")
+
+    async def _try_adaptive_redelegate(
+        self,
+        task: Task,
+        failed_subtask: Subtask,
+        idx: int,
+        prior_results: list,
+        error: str,
+    ) -> Optional[str]:
+        """#3: When a subtask exhausts all retries, ask Gemini for an alternative approach.
+
+        Generates a single replacement subtask with a different strategy and
+        attempts it once. Returns the result string, or None if re-delegation
+        itself fails.
+        """
+        gemini = getattr(self.agent, "gemini_client", None) if self.agent else None
+        if not gemini or not getattr(gemini, "enabled", False):
+            return None
+
+        logger.info(f"Task {task.id}: attempting adaptive re-delegation for subtask {idx+1}")
+
+        redelegate_prompt = (
+            f"An AI agent failed a task step after multiple retries. "
+            f"Propose ONE alternative approach as a short JSON object with keys: "
+            f"description, tool_hints (list), verification_criteria.\n\n"
+            f"Original step: {failed_subtask.description[:200]}\n"
+            f"Error: {error[:200]}\n"
+            f"Overall goal: {task.goal[:200]}\n\n"
+            f"Respond ONLY with a JSON object. No explanation."
+        )
+        try:
+            response = await gemini.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": redelegate_prompt}],
+                max_tokens=256,
+            )
+            text = self._extract_text_from_response(response).strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+            alt = json.loads(text)
+            alt_subtask = Subtask(
+                description=alt.get("description", failed_subtask.description),
+                tool_hints=alt.get("tool_hints", failed_subtask.tool_hints),
+                model_tier="sonnet",
+                verification_criteria=alt.get("verification_criteria", ""),
+                reversible=failed_subtask.reversible,
+            )
+            logger.info(f"Re-delegation plan: {alt_subtask.description[:80]}")
+            return await self._execute_subtask(task, alt_subtask, idx, prior_results)
+        except Exception as e:
+            logger.warning(f"Adaptive re-delegation failed: {e}")
+            return None
+
+    def _extract_text_from_response(self, response) -> str:
+        """Extract plain text from an LLM response object."""
+        if hasattr(response, "content"):
+            parts = []
+            for block in response.content:
+                if hasattr(block, "text"):
+                    parts.append(block.text)
+            return "\n".join(parts)
+        if isinstance(response, str):
+            return response
+        return ""
+
+    async def _record_subtask_episode(self, subtask: Subtask, result: str, failed: bool):
+        """#4: Record each subtask execution as an episodic memory for tool performance tracking."""
+        if not self.episodic_memory:
+            return
+        tool = subtask.tool_hints[0] if subtask.tool_hints else "unknown"
+        try:
+            await self.episodic_memory.record(
+                action=subtask.description[:100],
+                outcome=result[:200] if not failed else result.replace("ERROR:", "").strip()[:200],
+                success=not failed,
+                tool_used=tool,
+                context=f"verification: {subtask.verification_criteria[:80]}" if subtask.verification_criteria else None,
+            )
+        except Exception as e:
+            logger.debug(f"Episodic memory record failed: {e}")
+
+    async def _save_delegation_audit(self, task: Task, delegation_log: List[Dict[str, Any]]):
+        """#6: Save a structured JSON audit trail alongside the task result file."""
+        audit = {
+            "task_id": task.id,
+            "goal": task.goal,
+            "completed_at": datetime.utcnow().isoformat(),
+            "total_steps": len(delegation_log),
+            "successful_steps": sum(1 for s in delegation_log if s["success"]),
+            "re_delegated_steps": sum(1 for s in delegation_log if s["re_delegated"]),
+            "irreversible_steps": sum(1 for s in delegation_log if not s["reversible"]),
+            "steps": delegation_log,
+        }
+        audit_path = Path(f"./data/tasks/{task.id}_audit.json")
+        try:
+            audit_path.write_text(json.dumps(audit, indent=2))
+            logger.info(f"Delegation audit saved: {audit_path}")
+        except Exception as e:
+            logger.warning(f"Could not save delegation audit: {e}")

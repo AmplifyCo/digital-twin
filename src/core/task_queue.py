@@ -28,6 +28,8 @@ class Subtask:
     status: str = "pending"   # pending | running | done | failed | skipped
     result: str = ""
     error: str = ""
+    verification_criteria: str = ""  # How to confirm this step actually succeeded
+    reversible: bool = True          # False = cannot be undone (send email, post tweet, delete)
 
 
 @dataclass
@@ -71,6 +73,8 @@ class Task:
                     "status": st.status,
                     "result": st.result,
                     "error": st.error,
+                    "verification_criteria": st.verification_criteria,
+                    "reversible": st.reversible,
                 }
                 for st in self.subtasks
             ],
@@ -164,6 +168,8 @@ class TaskQueue:
                 "status": st.status,
                 "result": st.result,
                 "error": st.error,
+                "verification_criteria": st.verification_criteria,
+                "reversible": st.reversible,
             }
             for st in subtasks
         ])
@@ -192,6 +198,8 @@ class TaskQueue:
                 "status": st.status,
                 "result": st.result,
                 "error": st.error,
+                "verification_criteria": st.verification_criteria,
+                "reversible": st.reversible,
             }
             for st in task.subtasks
         ])
@@ -279,6 +287,8 @@ class TaskQueue:
                 status=s.get("status", "pending"),
                 result=s.get("result", ""),
                 error=s.get("error", ""),
+                verification_criteria=s.get("verification_criteria", ""),
+                reversible=s.get("reversible", True),
             )
             for s in subtask_dicts
         ]

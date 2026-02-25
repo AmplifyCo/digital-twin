@@ -516,6 +516,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 critic=_critic,
                 template_library=_template_library,
                 owner_whatsapp_number=_owner_wa,
+                episodic_memory=episodic_memory,
             )
             # Wire template_library into goal_decomposer for reuse on future tasks
             goal_decomposer.template_library = _template_library

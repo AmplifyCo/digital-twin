@@ -33,25 +33,23 @@ RULES:
 5. The LAST subtask must always be a synthesis step: "Compile all findings into a file at ./data/tasks/{task_id}.txt and summarize in 3 bullet points"
 6. Use ONLY tools from the Available Tools list
 7. Assign model_tier: "flash" for searches/reads, "sonnet" for synthesis/writing
+8. For each subtask set verification_criteria: a one-sentence test for how to confirm it succeeded (e.g. "Search returns ≥3 results", "File exists at path", "Tweet ID is returned")
+9. Set reversible: false for subtasks that CANNOT be undone (sending email, posting to X, deleting files, making purchases). Set true for reads, searches, writes to local files.
 
-Available Tools: {tools}
+Available Tools: {tools}{tool_performance}
 
 Goal: {goal}
 
 Respond ONLY with a JSON array. No explanation, no markdown fences.
 Example format:
 [
-  {{"description": "Search X for posts about OpenClaw using x_tool search_tweets", "tool_hints": ["x_tool"], "model_tier": "flash"}},
-  {{"description": "Search web for 'OpenClaw autonomous agent flaws reviews 2025'", "tool_hints": ["web_search"], "model_tier": "flash"}},
-  {{"description": "Fetch the OpenClaw GitHub README from https://github.com/openclaw/openclaw", "tool_hints": ["web_fetch"], "model_tier": "flash"}},
-  {{"description": "Compile all findings into ./data/tasks/{task_id}.txt with summary", "tool_hints": ["file_operations"], "model_tier": "sonnet"}}
+  {{"description": "Search X for posts about OpenClaw using x_tool search_tweets", "tool_hints": ["x_tool"], "model_tier": "flash", "verification_criteria": "At least 3 relevant tweets returned", "reversible": true}},
+  {{"description": "Search web for 'OpenClaw autonomous agent flaws reviews 2025'", "tool_hints": ["web_search"], "model_tier": "flash", "verification_criteria": "Search returns results with relevant content", "reversible": true}},
+  {{"description": "Fetch the OpenClaw GitHub README from https://github.com/openclaw/openclaw", "tool_hints": ["web_fetch"], "model_tier": "flash", "verification_criteria": "Page content contains README text", "reversible": true}},
+  {{"description": "Compile all findings into ./data/tasks/{task_id}.txt with summary", "tool_hints": ["file_operations"], "model_tier": "sonnet", "verification_criteria": "File exists at ./data/tasks/{task_id}.txt with content", "reversible": true}}
 ]"""
 
-# Fallback decomposition used when Gemini Flash is unavailable
-_FALLBACK_SUBTASKS = [
-    Subtask(description="Search the web for information about the requested topic", tool_hints=["web_search"], model_tier="flash"),
-    Subtask(description="Compile findings and write a summary file at ./data/tasks/result.txt", tool_hints=["file_operations"], model_tier="sonnet"),
-]
+# Fallback decomposition used when Gemini Flash is unavailable (built in _make_fallback)
 
 
 class GoalDecomposer:
@@ -75,6 +73,7 @@ class GoalDecomposer:
         goal: str,
         task_id: str,
         available_tools: Optional[List[str]] = None,
+        tool_performance: Optional[Dict[str, Any]] = None,
     ) -> List[Subtask]:
         """Decompose a goal into ordered subtasks.
 
@@ -82,6 +81,7 @@ class GoalDecomposer:
             goal: The high-level goal to accomplish
             task_id: Task ID (injected into the synthesis step file path)
             available_tools: List of registered tool names (for the planner prompt)
+            tool_performance: Dict of tool → success_rate from EpisodicMemory (optional)
 
         Returns:
             List of Subtask objects ready for sequential execution
@@ -102,11 +102,25 @@ class GoalDecomposer:
             except Exception as e:
                 logger.debug(f"GoalDecomposer: template query failed (continuing without): {e}")
 
+        # Build tool performance context for the planner
+        tool_perf_str = ""
+        if tool_performance:
+            perf_lines = []
+            for tool, stats in tool_performance.items():
+                rate = stats.get("rate", 1.0)
+                total = stats.get("total", 0)
+                if total >= 3:  # Only show tools with enough data to be meaningful
+                    label = "reliable" if rate >= 0.8 else ("flaky" if rate >= 0.5 else "unreliable")
+                    perf_lines.append(f"  {tool}: {rate:.0%} success ({total} uses) — {label}")
+            if perf_lines:
+                tool_perf_str = "\n\nTool Performance (from past experience):\n" + "\n".join(perf_lines) + "\nPrefer reliable tools where possible."
+
         prompt = _DECOMPOSE_PROMPT.format(
             bot_name=_BOT_NAME,
             tools=tools_str,
             goal=goal,
             task_id=task_id,
+            tool_performance=tool_perf_str,
         )
         if template_context:
             prompt = template_context + "\n" + prompt
@@ -162,6 +176,8 @@ class GoalDecomposer:
                     tool_hints=item.get("tool_hints", []),
                     model_tier=item.get("model_tier", "flash"),
                     status="pending",
+                    verification_criteria=item.get("verification_criteria", ""),
+                    reversible=item.get("reversible", True),
                 ))
 
             # Ensure synthesis step mentions the task_id file path
@@ -185,11 +201,15 @@ class GoalDecomposer:
                 description=f"Research the following using web_search and web_fetch: {goal}",
                 tool_hints=["web_search", "web_fetch"],
                 model_tier="flash",
+                verification_criteria="At least one search result or page content returned",
+                reversible=True,
             ),
             Subtask(
                 description=f"Compile all findings into ./data/tasks/{task_id}.txt and summarize in 3 bullet points",
                 tool_hints=["file_operations"],
                 model_tier="sonnet",
+                verification_criteria=f"File exists at ./data/tasks/{task_id}.txt with content",
+                reversible=True,
             ),
         ]
 
