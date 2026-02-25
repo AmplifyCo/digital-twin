@@ -525,9 +525,9 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             logger.warning("TaskRunner skipped (Telegram not configured — task_queue unavailable)")
 
         # Start AttentionEngine (proactive observations every 6h — driven by NovaPurpose)
-        # Disabled by default — enable by setting ATTENTION_ENGINE_ENABLED=true in .env
+        # Enabled by default — disable by setting ATTENTION_ENGINE_ENABLED=false in .env
         attention_task = None
-        if os.getenv("ATTENTION_ENGINE_ENABLED", "false").lower() == "true":
+        if os.getenv("ATTENTION_ENGINE_ENABLED", "true").lower() == "true":
             _gemini_for_attention = gemini_client if 'gemini_client' in locals() else None
             _nova_purpose = NovaPurpose()
             _attention_engine = AttentionEngine(
@@ -540,7 +540,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             attention_task = asyncio.create_task(_attention_engine.start())
             logger.info("🔍 AttentionEngine started (proactive observations every 6h)")
         else:
-            logger.info("🔍 AttentionEngine disabled (set ATTENTION_ENGINE_ENABLED=true to enable)")
+            logger.info("🔍 AttentionEngine disabled (set ATTENTION_ENGINE_ENABLED=false to disable)")
 
         # Show Telegram info
         if telegram.enabled:
