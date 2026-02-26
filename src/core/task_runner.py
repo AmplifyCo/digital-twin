@@ -539,11 +539,12 @@ class TaskRunner:
             logger.warning(f"Telegram step-done notification failed: {e}")
 
     async def _notify_user(self, task: Task, summary: str):
-        """Notify user via Telegram when a task completes.
+        """Notify user on the SAME channel the task was initiated from.
 
-        Reads the full report file and sends it in chunks so the user
-        receives the complete content in Telegram — not just a file path
-        that is inaccessible outside EC2.
+        Intermediate step updates always go to Telegram (non-intrusive editing).
+        Final completion notification goes ONLY to the originating channel:
+        - task.channel == "telegram" → Telegram only
+        - task.channel == "whatsapp" → WhatsApp only
         """
         file_path = Path(f"./data/tasks/{task.id}.txt")
 
@@ -557,27 +558,35 @@ class TaskRunner:
 
         header = f"✅ Done: {self._safe(task.goal, 80)}\n\n"
 
-        # Send full content via Telegram in chunks (Telegram limit: 4096 chars)
+        # Route final notification to originating channel only
+        if task.channel == "whatsapp":
+            # WhatsApp-initiated → send final result to WhatsApp only
+            if self.whatsapp_channel:
+                wa_to = task.user_id if (task.user_id or "").startswith(("whatsapp:", "+")) else self.owner_whatsapp_number
+                if wa_to:
+                    wa_msg = f"✅ Done!\n\n{full_content[:1200]}"
+                    try:
+                        await asyncio.to_thread(
+                            self.whatsapp_channel.send_message, wa_to, wa_msg
+                        )
+                    except Exception as e:
+                        logger.warning(f"WhatsApp notification failed: {e}")
+                else:
+                    logger.debug("WhatsApp channel configured but no owner number — falling back to Telegram")
+                    await self._send_final_telegram(header, full_content)
+            else:
+                # WhatsApp not available — fall back to Telegram
+                await self._send_final_telegram(header, full_content)
+        else:
+            # Telegram-initiated (or any other channel) → Telegram only
+            await self._send_final_telegram(header, full_content)
+
+    async def _send_final_telegram(self, header: str, full_content: str):
+        """Send final task result to Telegram."""
         try:
             await self._send_chunked_telegram(header, full_content)
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
-
-        # WhatsApp notification — resolve destination number
-        # Prefer task.user_id if it looks like a phone number (set when task queued from WhatsApp),
-        # otherwise fall back to the configured owner number (first of WHATSAPP_ALLOWED_NUMBERS).
-        if self.whatsapp_channel:
-            wa_to = task.user_id if (task.user_id or "").startswith(("whatsapp:", "+")) else self.owner_whatsapp_number
-            if wa_to:
-                wa_msg = f"✅ Done!\n\n{full_content[:1200]}"
-                try:
-                    await asyncio.to_thread(
-                        self.whatsapp_channel.send_message, wa_to, wa_msg
-                    )
-                except Exception as e:
-                    logger.warning(f"WhatsApp notification failed: {e}")
-            else:
-                logger.debug("WhatsApp channel configured but no owner number available — skipping")
 
     async def _send_chunked_telegram(self, header: str, content: str):
         """Send a potentially long message to Telegram in 3800-char chunks.
@@ -598,14 +607,10 @@ class TaskRunner:
             part += 1
 
     async def _notify_failure(self, task: Task, error: str):
-        """Notify user when a task fails on both Telegram and WhatsApp."""
+        """Notify user when a task fails — on the originating channel only."""
         msg = f"❌ Task failed: {self._safe(task.goal, 60)}\nReason: {self._safe(error, 120)}"
-        try:
-            await self.telegram.notify(msg, level="warning")
-        except Exception as e:
-            logger.warning(f"Telegram failure notification failed: {e}")
 
-        if self.whatsapp_channel and task.user_id:
+        if task.channel == "whatsapp" and self.whatsapp_channel and task.user_id:
             try:
                 await asyncio.to_thread(
                     self.whatsapp_channel.send_message,
@@ -614,6 +619,11 @@ class TaskRunner:
                 )
             except Exception as e:
                 logger.warning(f"WhatsApp failure notification failed: {e}")
+        else:
+            try:
+                await self.telegram.notify(msg, level="warning")
+            except Exception as e:
+                logger.warning(f"Telegram failure notification failed: {e}")
 
     async def _notify_budget_exceeded(
         self,

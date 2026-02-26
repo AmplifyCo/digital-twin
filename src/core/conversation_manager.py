@@ -593,6 +593,12 @@ class ConversationManager:
                 logger.info(f"[{trace_id}] Task interrupt handled")
                 return interrupt_response
 
+            # ── Quick task status check: "did the LinkedIn post go through?" ──
+            status_response = self._handle_task_status_query(message)
+            if status_response:
+                logger.info(f"[{trace_id}] Task status query handled inline")
+                return status_response
+
             # ── Pending action confirmation/decline ───────────────────────
             # If Nova previously proposed an action ("want me to post this?"),
             # intercept "yes"/"no" before they hit intent routing.
@@ -1749,6 +1755,64 @@ Additional Examples for Background:
     # No keyword list — the intent classifier (LLM) sets needs_background=True
     # when it judges the task requires 3+ tool calls or multi-step execution.
     # ── Interrupt mechanism: stop/cancel background tasks mid-execution ──────
+    # ── Quick task status queries ──────────────────────────────────────────
+    # Detects "did the LinkedIn post go through?", "was the email sent?", etc.
+    # Returns an immediate inline answer from the task queue instead of
+    # routing to the LLM (which might unnecessarily queue a background task).
+    _TASK_STATUS_PATTERNS = [
+        r"\b(?:did|has|was|is)\s+(?:the\s+)?(.+?)\s+(?:go through|go thru|succeed|successful|work|complete|post|sent|done|finished)\b",
+        r"\b(?:did|has|was|is)\s+(?:the\s+)?(.+?)\s+(?:task|job)\s+(?:done|finished|completed|successful)\b",
+        r"\bstatus (?:of |on )?(?:the\s+)?(.+?)\s+(?:task|post|email)\b",
+        r"\b(?:check|what happened with)\s+(?:the\s+)?(.+?)\s+(?:task|post|email)\b",
+    ]
+
+    def _handle_task_status_query(self, message: str) -> Optional[str]:
+        """Detect 'did X go through?' questions and answer from task queue inline.
+
+        Returns an immediate status answer, or None if not a status query.
+        """
+        if not self.task_queue:
+            return None
+
+        msg_lower = message.lower().strip()
+
+        keyword = None
+        for p in self._TASK_STATUS_PATTERNS:
+            m = re.search(p, msg_lower, re.IGNORECASE)
+            if m:
+                keyword = m.group(1).strip()
+                break
+
+        if not keyword:
+            return None
+
+        # Search all recent tasks (not just active) for the keyword
+        recent = self.task_queue.get_recent_tasks(limit=20)
+        matches = [t for t in recent if keyword.lower() in t.goal.lower()]
+
+        if not matches:
+            return None  # No match — let normal routing handle it
+
+        task = matches[0]  # Most recent match
+
+        if task.status == "done":
+            # Quick answer from queue status
+            result_preview = (task.result or "")[:200]
+            response = f"The {keyword} task completed successfully.\n\n{result_preview}"
+            if result_preview:
+                response += "\n\nNote: this is based on the task status. Let me know if you'd like me to verify it directly."
+            return response
+        elif task.status == "failed":
+            error = (task.error or "unknown error")[:150]
+            return f"The {keyword} task failed: {error}"
+        elif task.status in ("pending", "decomposing", "running"):
+            done_steps = sum(1 for st in task.subtasks if st.status == "done") if task.subtasks else 0
+            total_steps = len(task.subtasks) if task.subtasks else 0
+            progress = f" ({done_steps}/{total_steps} steps done)" if total_steps else ""
+            return f"The {keyword} task is still running{progress}. I'll notify you when it's done."
+
+        return None
+
     # Specific patterns that mean "stop the current background task"
     # ── Task interrupt patterns ────────────────────────────────────────────
     # Cancel-all patterns (existing behavior)
