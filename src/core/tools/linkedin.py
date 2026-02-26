@@ -41,19 +41,18 @@ class LinkedInTool(BaseTool):
         "Use for: publishing professional insights, sharing articles with commentary, "
         "posting thoughts on AI/tech trends to the professional network. "
         "Operations: 'post_text' (text only), 'post_article' (URL + commentary), "
-        "'delete_post' (remove a post by its URN/ID). "
-        "Do NOT use for casual social posts — LinkedIn is professional context only. "
-        "IMPORTANT: This tool ONLY posts and deletes. It CANNOT check if a post exists, "
-        "read posts, or verify post status. Never call this tool to 'check' something."
+        "'delete_post' (remove a post by its URN/ID), 'get_posts' (verify recent posts). "
+        "Do NOT use for casual social posts — LinkedIn is professional context only."
     )
     parameters = {
         "operation": {
             "type": "string",
-            "enum": ["post_text", "post_article", "delete_post"],
+            "enum": ["post_text", "post_article", "delete_post", "get_posts"],
             "description": (
                 "'post_text': publish a text-only LinkedIn post. "
                 "'post_article': share a URL with commentary (and optional title). "
-                "'delete_post': delete a post by its URN (e.g. 'urn:li:share:12345')."
+                "'delete_post': delete a post by its URN (e.g. 'urn:li:share:12345'). "
+                "'get_posts': fetch recent posts by the principal (verify posts exist)."
             ),
         },
         "text": {
@@ -106,6 +105,9 @@ class LinkedInTool(BaseTool):
             if not post_urn or not post_urn.strip():
                 return ToolResult(success=False, error="'post_urn' is required for delete_post")
             return await self._delete_post(post_urn.strip())
+
+        if operation == "get_posts":
+            return await self._get_posts()
 
         if not text or not text.strip():
             return ToolResult(success=False, error="'text' is required")
@@ -163,6 +165,55 @@ class LinkedInTool(BaseTool):
             },
         }
         return await self._call_api(body)
+
+    async def _get_posts(self, count: int = 5) -> ToolResult:
+        """Fetch recent posts by the principal (requires r_member_social scope)."""
+        from urllib.parse import quote
+        encoded_author = quote(self.person_urn, safe="")
+        url = f"{_UGC_POSTS_URL}?q=authors&authors=List({encoded_author})&count={count}"
+        headers = {
+            **_RESTLI_HEADER,
+            "Authorization": f"Bearer {self.access_token}",
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        elements = data.get("elements", [])
+                        if not elements:
+                            return ToolResult(success=True, output="No recent LinkedIn posts found.")
+                        lines = []
+                        for post in elements:
+                            post_id = post.get("id", "unknown")
+                            text = (
+                                post.get("specificContent", {})
+                                .get("com.linkedin.ugc.ShareContent", {})
+                                .get("shareCommentary", {})
+                                .get("text", "(no text)")
+                            )
+                            created = post.get("created", {}).get("time", "")
+                            lines.append(f"- [{post_id}] {text[:120]}")
+                        return ToolResult(
+                            success=True,
+                            output=f"Recent LinkedIn posts ({len(elements)}):\n" + "\n".join(lines),
+                        )
+                    elif resp.status == 403:
+                        return ToolResult(
+                            success=False,
+                            error="Cannot read posts — r_member_social scope not granted. Re-run linkedin_auth.py to add this permission.",
+                        )
+                    else:
+                        error_body = await resp.text()
+                        return ToolResult(
+                            success=False,
+                            error=f"LinkedIn API error {resp.status}: {error_body[:200]}",
+                        )
+        except Exception as e:
+            logger.error(f"LinkedIn get_posts failed: {e}", exc_info=True)
+            return ToolResult(success=False, error=f"Failed to fetch posts: {e}")
 
     async def _delete_post(self, post_urn: str) -> ToolResult:
         """Delete a LinkedIn post by URN."""

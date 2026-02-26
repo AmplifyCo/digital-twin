@@ -73,6 +73,7 @@ TOOL_RISK_MAP: Dict[str, Dict[str, RiskLevel]] = {
         "post_text": RiskLevel.IRREVERSIBLE,
         "post_article": RiskLevel.IRREVERSIBLE,
         "delete_post": RiskLevel.IRREVERSIBLE,
+        "get_posts": RiskLevel.READ,
         "_default": RiskLevel.WRITE,
     },
     "send_whatsapp_message": {
