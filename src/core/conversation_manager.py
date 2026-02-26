@@ -605,6 +605,7 @@ class ConversationManager:
             # e.g. "be more concise", "be more formal", "stop being verbose"
             if self.working_memory:
                 self._detect_and_store_calibration(message)
+                self._detect_timezone_change(message)
 
             # Try primary processing with Claude API
             logger.info(f"[{trace_id}] Routing to model...")
@@ -1749,6 +1750,8 @@ Additional Examples for Background:
     # when it judges the task requires 3+ tool calls or multi-step execution.
     # ── Interrupt mechanism: stop/cancel background tasks mid-execution ──────
     # Specific patterns that mean "stop the current background task"
+    # ── Task interrupt patterns ────────────────────────────────────────────
+    # Cancel-all patterns (existing behavior)
     _TASK_INTERRUPT_PATTERNS = [
         r"\bstop (the |current |background |that |this )?task\b",
         r"\bcancel (the |current |background |that |this )?task\b",
@@ -1760,21 +1763,56 @@ Additional Examples for Background:
         r"\bfocus on something else\b",
     ]
 
+    # Keyword-targeted cancel: "cancel the LinkedIn task", "stop the email task"
+    _TASK_KEYWORD_CANCEL_PATTERNS = [
+        r"\b(?:cancel|stop|abort|kill|drop)\s+(?:the\s+)?(.+?)\s+task\b",
+    ]
+
+    # Keyword-targeted modify: "modify the LinkedIn task to post at 10 AM"
+    _TASK_KEYWORD_MODIFY_PATTERNS = [
+        r"\b(?:modify|change|update|edit|adjust|reschedule)\s+(?:the\s+)?(.+?)\s+task\s+(?:to\s+)?(.+)",
+    ]
+
+    # Generic words that should fall through to cancel-all instead of keyword search
+    _GENERIC_TASK_WORDS = {"all", "every", "everything", "current", "background", "that", "this", "my", "the"}
+
     def _handle_task_interrupt(self, message: str) -> Optional[str]:
         """Check if message is a task interrupt command.
 
-        Only activates when there are pending/running tasks. Returns a response
-        string if interrupt was handled, None otherwise.
+        Handles three cases (checked in order):
+        1. Modify by keyword: "modify the LinkedIn task to post at 10 AM"
+        2. Cancel by keyword: "cancel the LinkedIn task"
+        3. Cancel all: "stop everything", "cancel all tasks"
+
+        Returns a response string if handled, None otherwise.
         """
         if not self.task_queue:
             return None
 
-        # Only check if there are active tasks (avoids false positives)
         pending = self.task_queue.get_pending_count()
         if pending == 0:
             return None
 
         msg_lower = message.lower().strip()
+
+        # ── Case 1: Modify by keyword (most specific) ────────────────
+        for p in self._TASK_KEYWORD_MODIFY_PATTERNS:
+            m = re.search(p, msg_lower, re.IGNORECASE)
+            if m:
+                keyword = m.group(1).strip()
+                modification = m.group(2).strip()
+                if keyword not in self._GENERIC_TASK_WORDS:
+                    return self._handle_keyword_modify(keyword, modification)
+
+        # ── Case 2: Cancel by keyword ─────────────────────────────────
+        for p in self._TASK_KEYWORD_CANCEL_PATTERNS:
+            m = re.search(p, msg_lower, re.IGNORECASE)
+            if m:
+                keyword = m.group(1).strip()
+                if keyword not in self._GENERIC_TASK_WORDS:
+                    return self._handle_keyword_cancel(keyword)
+
+        # ── Case 3: Cancel all (existing behavior) ────────────────────
         is_interrupt = any(
             re.search(p, msg_lower, re.IGNORECASE)
             for p in self._TASK_INTERRUPT_PATTERNS
@@ -1782,20 +1820,17 @@ Additional Examples for Background:
         if not is_interrupt:
             return None
 
-        # Cancel all pending/running tasks
-        tasks = self.task_queue.get_recent_tasks(limit=20)
+        tasks = self.task_queue.get_active_tasks()
         cancelled_goals = []
         for t in tasks:
-            if t.status in ("pending", "decomposing", "running"):
-                self.task_queue.cancel(t.id)
-                cancelled_goals.append(t.goal[:60])
+            self.task_queue.cancel(t.id)
+            cancelled_goals.append(t.goal[:60])
 
         if not cancelled_goals:
             return None
 
         logger.info(f"Task interrupt: cancelled {len(cancelled_goals)} task(s)")
 
-        # Add to unfinished so Nova remembers what was interrupted
         if self.working_memory and cancelled_goals:
             self.working_memory.add_unfinished(f"Interrupted: {cancelled_goals[0]}")
 
@@ -1804,6 +1839,64 @@ Additional Examples for Background:
             f"Stopped — I've cancelled {count} background task(s). "
             f"What would you like me to focus on instead?"
         )
+
+    def _find_tasks_by_keyword(self, keyword: str):
+        """Search active tasks whose goal contains the keyword (case-insensitive)."""
+        if not self.task_queue:
+            return []
+        active = self.task_queue.get_active_tasks()
+        keyword_lower = keyword.lower().strip()
+        return [t for t in active if keyword_lower in t.goal.lower()]
+
+    def _handle_keyword_cancel(self, keyword: str) -> Optional[str]:
+        """Cancel task(s) matching a keyword. Ask if multiple match."""
+        matches = self._find_tasks_by_keyword(keyword)
+
+        if not matches:
+            return f"No active task matching \"{keyword}\" found. Say \"list tasks\" to see what's running."
+
+        if len(matches) == 1:
+            task = matches[0]
+            self.task_queue.cancel(task.id)
+            logger.info(f"Keyword cancel: cancelled task {task.id} (keyword={keyword})")
+            if self.working_memory:
+                self.working_memory.add_unfinished(f"Cancelled: {task.goal[:80]}")
+            return f"Done — cancelled the task: {task.goal[:80]}"
+
+        lines = [f"I found {len(matches)} tasks matching \"{keyword}\":"]
+        for i, t in enumerate(matches, 1):
+            lines.append(f"  {i}. {t.goal[:80]}")
+        lines.append("Which one should I cancel? (say the number or describe it)")
+        return "\n".join(lines)
+
+    def _handle_keyword_modify(self, keyword: str, modification: str) -> Optional[str]:
+        """Cancel task matching keyword and re-enqueue with modified goal."""
+        matches = self._find_tasks_by_keyword(keyword)
+
+        if not matches:
+            return f"No active task matching \"{keyword}\" found. Say \"list tasks\" to see what's running."
+
+        if len(matches) == 1:
+            task = matches[0]
+            self.task_queue.cancel(task.id)
+            new_goal = f"{task.goal} — MODIFIED: {modification}"
+            new_id = self.task_queue.enqueue(
+                goal=new_goal,
+                channel=task.channel,
+                user_id=task.user_id,
+                notify_on_complete=task.notify_on_complete,
+            )
+            logger.info(f"Keyword modify: cancelled {task.id}, re-enqueued as {new_id}")
+            return (
+                f"Updated — cancelled the old task and re-queued with your change.\n"
+                f"New task: {new_goal[:120]}"
+            )
+
+        lines = [f"I found {len(matches)} tasks matching \"{keyword}\":"]
+        for i, t in enumerate(matches, 1):
+            lines.append(f"  {i}. {t.goal[:80]}")
+        lines.append("Which one should I modify?")
+        return "\n".join(lines)
 
     # ── Pending Action Confirmation / Decline ────────────────────────────────
     # Patterns that mean "yes, do it"
@@ -2044,6 +2137,93 @@ Additional Examples for Background:
                 self.working_memory.set_calibration(directive)
                 logger.info(f"Calibration stored: {directive[:60]}")
                 break
+
+    # ── Timezone travel detection ──────────────────────────────────────────
+    _CITY_TO_TZ = {
+        "new york": ("America/New_York", "New York"),
+        "nyc": ("America/New_York", "New York"),
+        "boston": ("America/New_York", "Boston"),
+        "miami": ("America/New_York", "Miami"),
+        "atlanta": ("America/New_York", "Atlanta"),
+        "washington": ("America/New_York", "Washington DC"),
+        "dc": ("America/New_York", "Washington DC"),
+        "chicago": ("America/Chicago", "Chicago"),
+        "dallas": ("America/Chicago", "Dallas"),
+        "houston": ("America/Chicago", "Houston"),
+        "denver": ("America/Denver", "Denver"),
+        "phoenix": ("America/Phoenix", "Phoenix"),
+        "seattle": ("America/Los_Angeles", "Seattle"),
+        "san francisco": ("America/Los_Angeles", "San Francisco"),
+        "sf": ("America/Los_Angeles", "San Francisco"),
+        "la": ("America/Los_Angeles", "Los Angeles"),
+        "los angeles": ("America/Los_Angeles", "Los Angeles"),
+        "london": ("Europe/London", "London"),
+        "paris": ("Europe/Paris", "Paris"),
+        "berlin": ("Europe/Berlin", "Berlin"),
+        "amsterdam": ("Europe/Amsterdam", "Amsterdam"),
+        "rome": ("Europe/Rome", "Rome"),
+        "madrid": ("Europe/Madrid", "Madrid"),
+        "tokyo": ("Asia/Tokyo", "Tokyo"),
+        "sydney": ("Australia/Sydney", "Sydney"),
+        "melbourne": ("Australia/Melbourne", "Melbourne"),
+        "dubai": ("Asia/Dubai", "Dubai"),
+        "singapore": ("Asia/Singapore", "Singapore"),
+        "mumbai": ("Asia/Kolkata", "Mumbai"),
+        "delhi": ("Asia/Kolkata", "Delhi"),
+        "india": ("Asia/Kolkata", "India"),
+        "bangalore": ("Asia/Kolkata", "Bangalore"),
+        "hong kong": ("Asia/Hong_Kong", "Hong Kong"),
+        "hawaii": ("Pacific/Honolulu", "Hawaii"),
+        "honolulu": ("Pacific/Honolulu", "Honolulu"),
+        "toronto": ("America/Toronto", "Toronto"),
+        "vancouver": ("America/Vancouver", "Vancouver"),
+    }
+
+    _TIMEZONE_TRAVEL_PATTERNS = [
+        r"\bi(?:'?m| am) (?:in|at|visiting|traveling to|travelling to) (.+?)(?:\.|$|,| this| for| right now| today| now)",
+        r"\bi(?:'?m| am) (?:currently )?(?:in|at) (.+?)(?:\.|$|,| this| for| right now| today| now)",
+        r"\bflew to (.+?)(?:\.|$|,| this| for)",
+        r"\blanded in (.+?)(?:\.|$|,| this| for)",
+        r"\bin (.+?) (?:this week|this month|for the week|for work|for a trip)",
+    ]
+
+    _TIMEZONE_HOME_PATTERNS = [
+        r"\bi(?:'?m| am) back (?:home|in (?:la|los angeles|sf|san francisco|california|the bay))",
+        r"\bback (?:home|to (?:normal|pst|pacific))",
+        r"\breset (?:my )?timezone",
+        r"\buse (?:pst|pacific|default|home) (?:time(?:zone)?)?",
+    ]
+
+    def _detect_timezone_change(self, message: str):
+        """Detect travel or return-home statements and update timezone override."""
+        if not self.working_memory:
+            return
+
+        msg_lower = message.lower().strip()
+
+        # Check "back home" patterns first
+        for p in self._TIMEZONE_HOME_PATTERNS:
+            if re.search(p, msg_lower, re.IGNORECASE):
+                if self.working_memory.timezone_override:
+                    self.working_memory.clear_timezone_override()
+                    from src.core.timezone import clear_override
+                    clear_override()
+                    logger.info("Timezone reset to default (user back home)")
+                return
+
+        # Check travel patterns
+        for p in self._TIMEZONE_TRAVEL_PATTERNS:
+            m = re.search(p, msg_lower, re.IGNORECASE)
+            if m:
+                city_raw = m.group(1).strip().lower()
+                tz_info = self._CITY_TO_TZ.get(city_raw)
+                if tz_info:
+                    tz_name, label = tz_info
+                    self.working_memory.set_timezone_override(tz_name, label)
+                    from src.core.timezone import set_override
+                    set_override(tz_name)
+                    logger.info(f"Timezone override set: {tz_name} ({label})")
+                return
 
     def _estimate_task_risk(self, goal: str, intent: Dict[str, Any]):
         """#5 Dynamic cognitive friction — estimate risk level of a background task.
@@ -2568,9 +2748,10 @@ SECURITY OVERRIDE:
         base_prompt = self._cached_agent_system_prompt
 
         # Inject live PST time into every prompt
-        from src.core.timezone import current_time_context
+        from src.core.timezone import current_time_context, effective_tz
         time_context = current_time_context()
-        base_prompt = f"{time_context}\n\nTIMEZONE: User is in US/Pacific (PST/PDT). Always interpret and display times in PST unless the user says they are traveling.\n\n{base_prompt}"
+        tz = effective_tz()
+        base_prompt = f"{time_context}\n\nTIMEZONE: User's current timezone is {tz}. Default is US/Pacific (PST/PDT). Always interpret and display times in the current timezone.\n\n{base_prompt}"
 
         # ADD BRAIN CONTEXT for continuity and knowledge
         # Uses channel for context isolation — each talent gets its own

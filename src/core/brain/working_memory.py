@@ -26,6 +26,7 @@ _DEFAULT = {
     "calibration":        "",              # user-issued behavioral directive ("be more concise")
     "session_count":      0,
     "last_active":        None,
+    "timezone_override":  None,       # {"tz": "America/New_York", "label": "New York", "set_at": "ISO"}
 }
 
 _TONES = {
@@ -120,6 +121,27 @@ class WorkingMemory:
         self._state["calibration"] = ""
         self._save()
 
+    def set_timezone_override(self, tz_name: str, label: str):
+        """Set a temporary timezone override (e.g., user is traveling)."""
+        self._state["timezone_override"] = {
+            "tz": tz_name,
+            "label": label,
+            "set_at": datetime.now().isoformat(),
+        }
+        self._save()
+        logger.info(f"Timezone override set: {tz_name} ({label})")
+
+    def clear_timezone_override(self):
+        """Clear timezone override (user is back home)."""
+        self._state["timezone_override"] = None
+        self._save()
+        logger.info("Timezone override cleared (back to default)")
+
+    @property
+    def timezone_override(self) -> Optional[Dict]:
+        """Return current timezone override or None."""
+        return self._state.get("timezone_override")
+
     # ── Context for system prompt ─────────────────────────────────────
 
     def get_context(self) -> str:
@@ -137,6 +159,10 @@ class WorkingMemory:
         calibration = self._state.get("calibration", "")
         if calibration:
             parts.append(f"📌 User instruction (active until changed): {calibration}")
+
+        tz_override = self._state.get("timezone_override")
+        if tz_override:
+            parts.append(f"🌍 User is currently in {tz_override['label']} — use {tz_override['tz']} timezone for all times.")
 
         unfinished = self._state.get("unfinished", [])
         if unfinished:

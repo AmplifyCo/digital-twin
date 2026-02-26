@@ -419,6 +419,13 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             conversation_manager.intent_data_collector = intent_data_collector
             logger.info("🧠 WorkingMemory + EpisodicMemory + IntentDataCollector wired into ConversationManager")
 
+            # Restore timezone override from working memory (persists across restarts)
+            if working_memory.timezone_override:
+                tz_override = working_memory.timezone_override
+                from src.core.timezone import set_override
+                set_override(tz_override["tz"])
+                logger.info(f"🌍 Restored timezone override: {tz_override['tz']} ({tz_override['label']})")
+
             logger.info("✅ Autonomy stack initialized")
 
             # Initialize TelegramChannel (thin transport wrapper)

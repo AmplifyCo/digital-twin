@@ -84,7 +84,14 @@ class CalendarTool(BaseTool):
         self.username = username
         self.password = password
         self.calendar_name = calendar_name
-        self.timezone = pytz.timezone('America/New_York')  # TODO: Make configurable
+        # Dynamic timezone — respects travel override from working memory
+        self._static_timezone = None  # resolved lazily via property
+
+    @property
+    def timezone(self):
+        """Get current effective timezone as pytz object (respects travel override)."""
+        from ..timezone import effective_tz
+        return pytz.timezone(str(effective_tz()))
 
     def _get_client(self) -> DAVClient:
         """Get CalDAV client."""

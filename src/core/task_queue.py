@@ -277,6 +277,14 @@ class TaskQueue:
             ).fetchall()
             return [self._row_to_task(r) for r in rows]
 
+    def get_active_tasks(self) -> List[Task]:
+        """Return all tasks with status pending, decomposing, or running."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status IN ('pending', 'decomposing', 'running') ORDER BY created_at DESC"
+            ).fetchall()
+            return [self._row_to_task(r) for r in rows]
+
     def get_active_and_recent_tasks(self, completed_hours: int = 2) -> List[Task]:
         """Return all active tasks + completed/failed tasks from the last N hours.
 
