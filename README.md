@@ -6,8 +6,6 @@
 
 Self-hosted. Open source. Your data never leaves your server.
 
-[**Get Early Access →**](#placeholder-url) &nbsp;&nbsp; [**Watch a Demo →**](#placeholder-url)
-
 </div>
 
 ---
@@ -45,12 +43,6 @@ You are wearing every hat. Nova gives you leverage without adding headcount.
 ---
 
 ✅ **Open source (MIT)** &nbsp; ✅ **Self-hosted on your server** &nbsp; ✅ **No subscription fees** &nbsp; ✅ **Read every line of code**
-
-<div align="center">
-
-[**Get Early Access →**](#placeholder-url) &nbsp;&nbsp; [**Watch a Demo →**](#placeholder-url)
-
-</div>
 
 ---
 
