@@ -151,7 +151,7 @@ class WorkingMemory:
     # ── Pending Actions (confirmation loop fix) ─────────────────────
 
     # Max age for a pending action before it auto-expires (seconds)
-    _PENDING_ACTION_TTL = 600  # 10 minutes
+    _PENDING_ACTION_TTL = 1800  # 30 minutes
 
     def add_pending_action(
         self,

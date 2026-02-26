@@ -1809,7 +1809,7 @@ Additional Examples for Background:
     # Patterns that mean "yes, do it"
     _CONFIRM_PATTERNS = [
         r"^yes$", r"^yeah$", r"^yep$", r"^yup$", r"^sure$", r"^absolutely$",
-        r"^do it$", r"^go ahead$", r"^go for it$", r"^fire away$",
+        r"^do it$", r"^go ahead( and)?$", r"^go for it$", r"^fire away$",
         r"^confirm$", r"^approved$", r"^send it$", r"^post it$", r"^ship it$",
         r"^please do$", r"^yes please$", r"^yeah do it$", r"^yes do it$",
         r"^that'?s? (good|great|perfect|fine)$",
@@ -1878,12 +1878,17 @@ Additional Examples for Background:
                 return await self._execute_pending_actions([matched_action])
 
         # Not a confirmation/decline — let normal routing handle it
-        # But first, clear stale pending actions since user moved on
-        # (if their message is clearly about something else)
-        if len(msg_lower.split()) > 5:
-            # Multi-word message that isn't yes/no = user moved on
-            self.working_memory.clear_pending_actions()
-            logger.info("Pending actions cleared — user moved to a different topic")
+        # Only clear pending actions if message is clearly a new unrelated topic
+        # (long message AND doesn't mention any pending tool/label keywords)
+        if len(msg_lower.split()) > 8:
+            pending_keywords = set()
+            for p in pending:
+                pending_keywords.update(p.get("label", "").lower().split())
+                pending_keywords.add(p.get("tool_name", "").lower())
+            # If none of the pending keywords appear, user has moved on
+            if not any(kw in msg_lower for kw in pending_keywords if len(kw) > 3):
+                self.working_memory.clear_pending_actions()
+                logger.info("Pending actions cleared — user moved to a different topic")
 
         return None
 
@@ -1927,15 +1932,18 @@ Additional Examples for Background:
 
             logger.info(f"Executing confirmed action: {label} (tool={tool_name})")
 
-            # Build an explicit task for the agent that leaves no ambiguity
-            param_desc = json.dumps(params, ensure_ascii=False) if params else ""
+            # Build an explicit task — give the agent the full proposal text so it
+            # can extract the exact content (post body, email text, etc.) and execute
+            # without re-drafting or asking for confirmation again.
+            proposal_text = action.get("proposal_text", "")
             task = (
-                f"The user has confirmed they want to proceed. "
-                f"Execute the '{tool_name}' tool now with these parameters: {param_desc}\n"
-                f"Action: {label}\n"
-                f"Original proposal: {action.get('proposal_text', '')[:300]}\n\n"
+                f"The user has confirmed they want to proceed with: {label}\n\n"
+                f"IMPORTANT: The content to use is in the proposal below. "
+                f"Extract it exactly as shown and execute the '{tool_name}' tool immediately.\n\n"
+                f"Proposal that was approved:\n{proposal_text[:800]}\n\n"
                 f"DO NOT ask for confirmation again — the user already said yes. "
-                f"Execute the tool and report the result."
+                f"DO NOT re-draft or change the content — use exactly what was proposed. "
+                f"Execute the tool and report the result in plain language."
             )
 
             try:
