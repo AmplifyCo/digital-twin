@@ -277,6 +277,23 @@ class TaskQueue:
             ).fetchall()
             return [self._row_to_task(r) for r in rows]
 
+    def get_active_and_recent_tasks(self, completed_hours: int = 2) -> List[Task]:
+        """Return all active tasks + completed/failed tasks from the last N hours.
+
+        Active = pending, decomposing, running (always shown).
+        Completed/failed = only those finished within the last completed_hours.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM tasks
+                   WHERE status IN ('pending', 'decomposing', 'running')
+                      OR (status IN ('done', 'failed')
+                          AND completed_at >= datetime('now', ?))
+                   ORDER BY created_at DESC""",
+                (f"-{completed_hours} hours",),
+            ).fetchall()
+            return [self._row_to_task(r) for r in rows]
+
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:

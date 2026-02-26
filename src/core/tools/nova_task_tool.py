@@ -122,16 +122,30 @@ class NovaTaskTool(BaseTool):
         )
 
     async def _list_tasks(self) -> ToolResult:
-        tasks = self.task_queue.get_recent_tasks(limit=10)
+        tasks = self.task_queue.get_active_and_recent_tasks(completed_hours=2)
         if not tasks:
-            return ToolResult(success=True, output="No tasks in queue.")
+            return ToolResult(success=True, output="No active tasks and nothing completed in the last 2 hours.")
 
-        lines = ["Recent tasks:"]
-        for t in tasks:
-            done_subtasks = sum(1 for st in t.subtasks if st.status == "done") if t.subtasks else 0
-            total_subtasks = len(t.subtasks)
-            progress = f" [{done_subtasks}/{total_subtasks} steps]" if total_subtasks else ""
-            lines.append(f"• [{t.status.upper()}]{progress} {t.goal[:80]} (id: {t.id})")
+        active = [t for t in tasks if t.status in ("pending", "decomposing", "running")]
+        recent = [t for t in tasks if t.status in ("done", "failed")]
+
+        lines = []
+        if active:
+            lines.append("Active tasks:")
+            for t in active:
+                done_subtasks = sum(1 for st in t.subtasks if st.status == "done") if t.subtasks else 0
+                total_subtasks = len(t.subtasks)
+                progress = f" [{done_subtasks}/{total_subtasks} steps]" if total_subtasks else ""
+                lines.append(f"  • [{t.status.upper()}]{progress} {t.goal[:80]}")
+        if recent:
+            lines.append("Completed in last 2 hours:")
+            for t in recent:
+                done_subtasks = sum(1 for st in t.subtasks if st.status == "done") if t.subtasks else 0
+                total_subtasks = len(t.subtasks)
+                progress = f" [{done_subtasks}/{total_subtasks} steps]" if total_subtasks else ""
+                lines.append(f"  • [{t.status.upper()}]{progress} {t.goal[:80]}")
+        if not lines:
+            return ToolResult(success=True, output="No active tasks and nothing completed in the last 2 hours.")
         return ToolResult(success=True, output="\n".join(lines))
 
     async def _get_status(self, task_id: Optional[str]) -> ToolResult:

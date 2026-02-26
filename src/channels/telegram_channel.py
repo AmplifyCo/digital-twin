@@ -198,4 +198,12 @@ class TelegramChannel:
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.error(f"Send failed: {e}")
+            if "parse" in str(e).lower() or "entities" in str(e).lower():
+                # Markdown parsing failed — retry as plain text so message is never lost
+                try:
+                    await self.bot.send_message(chat_id=self.chat_id, text=text)
+                    logger.debug("Sent as plain text (Markdown parse failed)")
+                except Exception as e2:
+                    logger.error(f"Send failed (plain text fallback): {e2}")
+            else:
+                logger.error(f"Send failed: {e}")

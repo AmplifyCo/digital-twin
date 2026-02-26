@@ -328,7 +328,14 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 except Exception as e:
                     logger.warning(f"Could not read Cloudflare tunnel info: {e}")
 
-            # Fallback to HTTP with public IP (will fail with Telegram)
+            # Try NOVA_BASE_URL env var (HTTPS proxy / Cloudflare / nginx)
+            if not webhook_url:
+                nova_base = os.getenv("NOVA_BASE_URL", "").rstrip("/")
+                if nova_base.startswith("https://"):
+                    webhook_url = f"{nova_base}/telegram/webhook"
+                    logger.info(f"🌐 Using NOVA_BASE_URL for webhook: {webhook_url}")
+
+            # Last resort: HTTP with public IP (will fail with Telegram — shown as warning)
             if not webhook_url:
                 try:
                     public_ip = subprocess.check_output(
@@ -337,7 +344,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                     ).decode().strip()
                     webhook_url = f"http://{public_ip}:{config.dashboard_port}/telegram/webhook"
                     logger.warning("⚠️  Using HTTP webhook URL - Telegram requires HTTPS!")
-                    logger.warning("   Run: bash deploy/cloudflare/setup-tunnel.sh")
+                    logger.warning("   Set NOVA_BASE_URL=https://your-domain in .env")
                 except:
                     webhook_url = None
                     logger.warning("Could not determine webhook URL")
