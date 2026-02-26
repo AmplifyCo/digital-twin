@@ -163,17 +163,17 @@ fi
 
 # Clone repository (if not already cloned)
 cd ~
-if [ ! -d "digital-twin" ]; then
+if [ ! -d "novabot" ]; then
     echo "📥 Cloning repository..."
 
     # Use environment variable if provided, otherwise use default
-    REPO_URL="${REPO_URL:-https://github.com/AmplifyCo/digital-twin.git}"
+    REPO_URL="${REPO_URL:-https://github.com/AmplifyCo/novabot.git}"
 
     echo "Repository: $REPO_URL"
-    git clone "$REPO_URL" digital-twin
+    git clone "$REPO_URL" novabot
 fi
 
-cd digital-twin
+cd novabot
 
 # Create virtual environment
 echo "🔧 Creating virtual environment..."
@@ -193,7 +193,7 @@ echo "✅ dt-setup command installed (works like git, python, npm)"
 # Configure limited sudo access
 echo "🔐 Configuring limited sudo access for agent..."
 CURRENT_USER=$(whoami)
-sudo tee /etc/sudoers.d/digital-twin > /dev/null << 'SUDOERS_EOF'
+sudo tee /etc/sudoers.d/novabot > /dev/null << 'SUDOERS_EOF'
 # Limited sudo access for autonomous agent
 # Package management
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/yum install *
@@ -205,11 +205,11 @@ ec2-user ALL=(ALL) NOPASSWD: /usr/bin/apt install *
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/apt update *
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/pip install *
 
-# Service management (only digital-twin service)
-ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart digital-twin
+# Service management (only novabot service)
+ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart novabot
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *
-ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop digital-twin
-ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl start digital-twin
+ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop novabot
+ec2-user ALL=(ALL) NOPASSWD: /usr/bin/systemctl start novabot
 
 # Firewall management
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/firewall-cmd *
@@ -218,12 +218,12 @@ ec2-user ALL=(ALL) NOPASSWD: /usr/bin/firewall-cmd *
 ec2-user ALL=(ALL) NOPASSWD: /usr/bin/journalctl *
 SUDOERS_EOF
 
-sudo chmod 440 /etc/sudoers.d/digital-twin
+sudo chmod 440 /etc/sudoers.d/novabot
 echo "✅ Limited sudo access configured"
 echo ""
 echo "Agent capabilities:"
 echo "  ✅ Install packages (yum/apt/pip)"
-echo "  ✅ Manage digital-twin service"
+echo "  ✅ Manage novabot service"
 echo "  ✅ Configure firewall"
 echo "  ✅ View system logs"
 echo "  ❌ Cannot shutdown/reboot"
@@ -395,7 +395,7 @@ if [[ "$setup_tunnel" =~ ^[Yy]$ ]]; then
     TUNNEL_HOSTNAME="${subdomain}.${user_domain}"
 
     # Create or use existing tunnel
-    TUNNEL_NAME="digital-twin"
+    TUNNEL_NAME="novabot"
 
     if cloudflared tunnel list 2>/dev/null | grep -q "$TUNNEL_NAME"; then
         echo "✅ Using existing tunnel: $TUNNEL_NAME"
@@ -515,7 +515,7 @@ CURRENT_USER=$(whoami)
 CURRENT_DIR=$(pwd)
 
 # Create service file with current user and directory
-cat > /tmp/digital-twin.service << EOF
+cat > /tmp/novabot.service << EOF
 [Unit]
 Description=Digital Twin - Self-Building AI System with Dual Brain Architecture
 After=network.target
@@ -549,9 +549,9 @@ WantedBy=multi-user.target
 EOF
 
 # Install service
-sudo mv /tmp/digital-twin.service /etc/systemd/system/
+sudo mv /tmp/novabot.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable digital-twin
+sudo systemctl enable novabot
 
 # Configure automatic system updates
 echo "🔄 Configuring automatic security updates..."
@@ -587,7 +587,7 @@ pip cache purge > /dev/null 2>&1 || true
 
 # Remove any temporary files
 rm -f /tmp/chromedriver.zip 2>/dev/null || true
-rm -f /tmp/digital-twin.service 2>/dev/null || true
+rm -f /tmp/novabot.service 2>/dev/null || true
 
 # Clean up downloaded setup script if it exists
 rm -f ~/amazon-linux-setup.sh 2>/dev/null || true
@@ -618,13 +618,13 @@ echo "   dt-setup              # Interactive wizard (recommended)"
 echo "   # OR manually edit:  nano .env"
 echo ""
 echo "2. Start the agent:"
-echo "   sudo systemctl start digital-twin"
+echo "   sudo systemctl start novabot"
 echo ""
 echo "3. Check status:"
-echo "   sudo systemctl status digital-twin"
+echo "   sudo systemctl status novabot"
 echo ""
 echo "4. View logs:"
-echo "   sudo journalctl -u digital-twin -f"
+echo "   sudo journalctl -u novabot -f"
 echo "   # Or: tail -f data/logs/agent.log"
 echo ""
 echo "5. Access web dashboard:"

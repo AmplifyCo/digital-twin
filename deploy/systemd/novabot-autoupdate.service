@@ -1,0 +1,14 @@
+[Unit]
+Description=Digital Twin Auto-Update Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/home/ec2-user/novabot
+ExecStart=/home/ec2-user/novabot/auto-update.sh
+StandardOutput=append:/home/ec2-user/novabot/logs/auto-update.log
+StandardError=append:/home/ec2-user/novabot/logs/auto-update.log
+
+[Install]
+WantedBy=multi-user.target

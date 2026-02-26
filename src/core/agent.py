@@ -584,7 +584,7 @@ class AutonomousAgent:
                             if fix_result.success:
                                 content += f"\n\n✨ I have automatically implemented this feature in `{Path(file_path).name}`.\n" \
                                            f"Please RESTART the service to use it:\n" \
-                                           f"```bash\nsudo systemctl restart digital-twin\n```"
+                                           f"```bash\nsudo systemctl restart novabot\n```"
                                 logger.info(f"Auto-implemented feature for {tool_name}")
 
             tool_result = {

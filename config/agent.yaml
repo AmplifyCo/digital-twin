@@ -30,7 +30,7 @@ agent:
       - sudo apt update
       - sudo pip install
       # Service management
-      - sudo systemctl restart digital-twin
+      - sudo systemctl restart novabot
       - sudo systemctl status
       # Firewall
       - sudo firewall-cmd

@@ -357,7 +357,7 @@ agent:
     allow_sudo: true
     allowed_sudo_commands:
       - sudo yum install
-      - sudo systemctl restart digital-twin
+      - sudo systemctl restart novabot
     blocked_commands:
       - rm -rf /
       - sudo shutdown

@@ -397,8 +397,8 @@ pip install -r requirements.txt
 nano .env
 
 # Run as a systemd service
-sudo systemctl start digital-twin
-sudo systemctl enable digital-twin
+sudo systemctl start novabot
+sudo systemctl enable novabot
 ```
 
 ### Optional: Full browser support
@@ -414,7 +414,7 @@ playwright install --with-deps chromium
 ```bash
 git pull
 pip install -r requirements.txt   # pick up any new dependencies
-sudo systemctl restart digital-twin
+sudo systemctl restart novabot
 ```
 
 ---
@@ -530,12 +530,12 @@ Nova is now running and will restart automatically on login or if it crashes.
 
 | Task | Mac (launchctl) | Linux (systemctl) |
 |---|---|---|
-| **Start** | `launchctl load ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl start digital-twin` |
-| **Stop** | `launchctl unload ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl stop digital-twin` |
-| **Restart** | `launchctl kickstart -k gui/$(id -u)/com.nova.digitalclone` | `sudo systemctl restart digital-twin` |
-| **Status** | `launchctl list \| grep nova` | `sudo systemctl status digital-twin` |
-| **Enable on boot** | `RunAtLoad: true` in plist (already set above) | `sudo systemctl enable digital-twin` |
-| **Logs (live)** | `tail -f ~/novabot/logs/nova.log` | `journalctl -u digital-twin -f` |
+| **Start** | `launchctl load ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl start novabot` |
+| **Stop** | `launchctl unload ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl stop novabot` |
+| **Restart** | `launchctl kickstart -k gui/$(id -u)/com.nova.digitalclone` | `sudo systemctl restart novabot` |
+| **Status** | `launchctl list \| grep nova` | `sudo systemctl status novabot` |
+| **Enable on boot** | `RunAtLoad: true` in plist (already set above) | `sudo systemctl enable novabot` |
+| **Logs (live)** | `tail -f ~/novabot/logs/nova.log` | `journalctl -u novabot -f` |
 
 ### Update on Mac
 
@@ -641,7 +641,7 @@ rm ~/Library/LaunchAgents/com.nova.digitalclone.plist
 ## 📁 Project Structure
 
 ```
-digital-twin/
+novabot/
 ├── src/
 │   ├── core/
 │   │   ├── conversation_manager.py        # Heart — intent routing, model selection, delegation scoring

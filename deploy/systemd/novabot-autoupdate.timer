@@ -1,6 +1,6 @@
 [Unit]
 Description=Digital Twin Auto-Update Timer
-Requires=digital-twin-autoupdate.service
+Requires=novabot-autoupdate.service
 
 [Timer]
 # Run daily at 3 AM (nightly update)

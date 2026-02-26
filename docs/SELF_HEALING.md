@@ -227,10 +227,10 @@ When auto-fix fails, you may need to:
 ssh ec2-user@your-instance
 
 # Check logs
-tail -f /path/to/digital-twin/data/logs/agent.log
+tail -f /path/to/novabot/data/logs/agent.log
 
 # Manual fix
-cd /path/to/digital-twin
+cd /path/to/novabot
 git pull
 sudo systemctl restart claude-agent
 ```
@@ -239,7 +239,7 @@ sudo systemctl restart claude-agent
 
 #### Permission Errors
 ```bash
-sudo chown -R ec2-user:ec2-user /path/to/digital-twin
+sudo chown -R ec2-user:ec2-user /path/to/novabot
 chmod +x scripts/*.sh
 ```
 

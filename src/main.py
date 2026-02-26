@@ -86,7 +86,7 @@ async def main():
             # Populate CoreBrain with project essentials
             logger.info("📚 Populating CoreBrain with project knowledge...")
             await brain.populate_project_essentials({
-                "git_url": "https://github.com/AmplifyCo/digital-twin.git",
+                "git_url": "https://github.com/AmplifyCo/novabot.git",
                 "architecture": """Digital Twin - Self-Building AI System with Dual Brain Architecture
 
 Architecture:
@@ -133,7 +133,7 @@ Architecture:
                 "system_context": """System: Digital Twin
 Mode: Self-Build (CoreBrain active)
 Purpose: Building an autonomous AI system that builds itself
-Service: digital-twin.service (systemd)
+Service: novabot.service (systemd)
 Deployment: EC2 with Cloudflare Tunnel
 Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             })

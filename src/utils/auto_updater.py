@@ -246,7 +246,7 @@ class AutoUpdater:
 
             # Restart via systemd
             result = await self.bash_tool.execute(
-                "sudo systemctl restart digital-twin",
+                "sudo systemctl restart novabot",
                 timeout=30
             )
 

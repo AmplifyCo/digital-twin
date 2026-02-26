@@ -1,7 +1,7 @@
 """LinkedIn OAuth 2.0 Setup — generates the auth URL to open in your browser.
 
 Usage (on EC2):
-    /home/ec2-user/digital-twin/venv/bin/python scripts/linkedin_auth.py
+    /home/ec2-user/novabot/venv/bin/python scripts/linkedin_auth.py
 
 What it does:
     1. Prints the LinkedIn authorization URL
@@ -11,7 +11,7 @@ What it does:
        - Fetches your person URN automatically via /v2/userinfo (openid)
        - Saves LINKEDIN_ACCESS_TOKEN and LINKEDIN_PERSON_URN to .env
        - Shows a success page in your browser
-    4. Restart Nova:  sudo systemctl restart digital-twin
+    4. Restart Nova:  sudo systemctl restart novabot
 
 Requirements:
     - LINKEDIN_CLIENT_ID in .env
@@ -80,7 +80,7 @@ print("  - Saves LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN to .env")
 print("  - Shows a success page in your browser")
 print()
 print("Then restart Nova:")
-print("  sudo systemctl restart digital-twin")
+print("  sudo systemctl restart novabot")
 print()
 print("=" * 65)
 print(f"Redirect URI: {REDIRECT_URI}")

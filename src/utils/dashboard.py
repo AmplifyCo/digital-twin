@@ -671,7 +671,7 @@ class Dashboard:
 <hr>
 <p>LINKEDIN_ACCESS_TOKEN and LINKEDIN_PERSON_URN saved to <code>.env</code>.</p>
 <p><strong>Restart Nova:</strong></p>
-<pre>sudo systemctl restart digital-twin</pre>
+<pre>sudo systemctl restart novabot</pre>
 </body></html>""")
                 else:
                     self._update_env_keys(env_path, {"LINKEDIN_ACCESS_TOKEN": access_token})
@@ -685,8 +685,8 @@ to fetch your person ID automatically, so you need to set it once manually.</p>
   "https://api.linkedin.com/v2/me?projection=(id)" \\
   | python3 -m json.tool</pre>
 <p>Copy the <code>id</code> value, then on EC2:</p>
-<pre>echo "LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID" >> /home/ec2-user/digital-twin/.env
-sudo systemctl restart digital-twin</pre>
+<pre>echo "LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID" >> /home/ec2-user/novabot/.env
+sudo systemctl restart novabot</pre>
 <p><small>Token expires in {expires_days} days.</small></p>
 </body></html>""")
 

@@ -5,8 +5,8 @@ The simplest AI agent setup you'll ever do.
 ## 🚀 Quick Start (2 Commands!)
 
 ```bash
-git clone https://github.com/AmplifyCo/digital-twin.git
-cd digital-twin && ./dt-setup
+git clone https://github.com/AmplifyCo/novabot.git
+cd novabot && ./dt-setup
 ```
 
 **That's it!** The script handles everything:
@@ -158,7 +158,7 @@ If you prefer to manually edit `.env`:
 
 ```bash
 dt-setup                   # Full wizard (all tools)
-dt-setup digital-twin      # Full wizard (alias)
+dt-setup novabot      # Full wizard (alias)
 dt-setup core              # API keys only
 dt-setup telegram          # Telegram only
 dt-setup email             # Email only

@@ -123,7 +123,7 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     trap fix_permissions EXIT
 
     # Update systemd service if changed
-    SERVICE_FILE="digital-twin.service"
+    SERVICE_FILE="novabot.service"
     INSTALLED_SERVICE="/etc/systemd/system/$SERVICE_FILE"
     if [ -f "$SERVICE_FILE" ] && [ -f "$INSTALLED_SERVICE" ]; then
         if ! cmp -s "$SERVICE_FILE" "$INSTALLED_SERVICE"; then
@@ -159,8 +159,8 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     log "🔄 Restarting Digital Twin bot..."
 
     # Try systemd first
-    if systemctl is-enabled --quiet digital-twin 2>/dev/null; then
-        sudo systemctl restart digital-twin
+    if systemctl is-enabled --quiet novabot 2>/dev/null; then
+        sudo systemctl restart novabot
         log "✅ Bot restarted (systemd service)"
     elif pgrep -f "python.*src.main" > /dev/null; then
         # Kill existing process

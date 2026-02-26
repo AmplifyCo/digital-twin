@@ -5,9 +5,9 @@ After=network.target
 [Service]
 User=ec2-user
 Group=ec2-user
-WorkingDirectory=/home/ec2-user/digital-twin
-Environment="PATH=/home/ec2-user/digital-twin/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/ec2-user/digital-twin/venv/bin/python src/watchdog.py
+WorkingDirectory=/home/ec2-user/novabot
+Environment="PATH=/home/ec2-user/novabot/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/ec2-user/novabot/venv/bin/python src/watchdog.py
 Restart=always
 RestartSec=5
 

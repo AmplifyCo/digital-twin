@@ -23,7 +23,7 @@ This guide shows the **simplified deployment process** with automated Cloudflare
 SSH into your EC2 instance and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AmplifyCo/digital-twin/main/deploy/ec2/amazon-linux-setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AmplifyCo/novabot/main/deploy/ec2/amazon-linux-setup.sh | bash
 ```
 
 ### What This Does Automatically:
@@ -96,7 +96,7 @@ The script will automatically:
 ### 1. Configure .env File
 
 ```bash
-cd ~/digital-twin
+cd ~/novabot
 nano .env
 ```
 
@@ -172,7 +172,7 @@ Once configured, you can chat with your agent via Telegram:
 If you skipped Cloudflare Tunnel during installation:
 
 ```bash
-cd ~/digital-twin
+cd ~/novabot
 bash deploy/cloudflare/setup-tunnel.sh
 ```
 
@@ -269,9 +269,9 @@ After successful deployment:
 
 ## Support
 
-- **Issues**: https://github.com/AmplifyCo/digital-twin/issues
-- **Logs**: `~/digital-twin/data/logs/`
-- **Config**: `~/digital-twin/.env`
+- **Issues**: https://github.com/AmplifyCo/novabot/issues
+- **Logs**: `~/novabot/data/logs/`
+- **Config**: `~/novabot/.env`
 
 ---
 

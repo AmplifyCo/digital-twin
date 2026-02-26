@@ -319,7 +319,7 @@ Monitoring and will attempt auto-fix if possible.
 **Action:** {result.action_taken}
 
 Fix is in a git branch — review and merge to activate.
-Once merged, restart: `sudo systemctl restart digital-twin`"""
+Once merged, restart: `sudo systemctl restart novabot`"""
 
         await self.telegram.notify(message)
 

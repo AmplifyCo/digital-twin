@@ -257,7 +257,7 @@ class CalendarTool(BaseTool):
                 event.add('location', location)
 
             event.add('dtstamp', datetime.now(self.timezone))
-            event.add('uid', f"{datetime.now().timestamp()}@digital-twin")
+            event.add('uid', f"{datetime.now().timestamp()}@novabot")
 
             cal.add_component(event)
 

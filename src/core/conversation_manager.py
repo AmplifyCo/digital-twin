@@ -2656,7 +2656,7 @@ SECURITY OVERRIDE:
 
             # Use agent's tools to restart the service
             return await self.agent.run(
-                task="Restart the digital-twin systemd service using: sudo systemctl restart digital-twin",
+                task="Restart the novabot systemd service using: sudo systemctl restart novabot",
                 max_iterations=5,
                 system_prompt=await self._build_system_prompt("restart")
             )
