@@ -27,11 +27,12 @@ class NovaTaskTool(BaseTool):
 
     name = "nova_task"
     description = (
-        "Tool to queue a goal for Nova's background autonomous execution. "
-        "Use when: task requires 3+ steps, multi-source research, compiling a report, "
-        "monitoring over time, or any work that would take more than a few minutes. "
-        "Nova will work on it independently and notify you via WhatsApp when done. "
-        "Do NOT use for simple lookups or single-tool actions."
+        "Queue a goal for background autonomous execution (runs independently, notifies when done). "
+        "ONLY use when the task genuinely requires 3+ steps AND multiple tools — e.g., multi-source "
+        "research then compiling a report, or monitoring something over time. "
+        "NEVER use for: checking status of something, simple questions, single-tool lookups, "
+        "quick answers, or anything the user expects an immediate reply to. "
+        "If in doubt, answer directly — don't queue it."
     )
     parameters = {
         "operation": {

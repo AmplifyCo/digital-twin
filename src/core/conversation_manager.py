@@ -1589,7 +1589,7 @@ Return EXACTLY: intent|confidence|inferred_task|tools|needs_background
 - confidence: high / medium / low
 - inferred_task: expand vague requests into a concrete actionable description using the Purpose context (manage email/calendar/social media/research on principal's behalf). Never return "none" for action intents.
 - tools: comma-separated tool names from AVAILABLE TOOLS that will be needed, or "none"
-- needs_background: "yes" if task requires 3+ tool calls, multi-step research, or more than ~1 minute of work. "no" for quick single-tool actions.
+- needs_background: "yes" ONLY for genuinely complex tasks that require 3+ DIFFERENT tool calls AND multi-step research (e.g., "research AI trends and draft a report"). Say "no" for: status checks, simple questions, looking something up, single actions, anything the user expects an immediate answer to. When in doubt, say "no".
 
 Intents:
 - action: needs a tool to execute (email, calendar, bash, file, web, search, post, reminder, etc.)
