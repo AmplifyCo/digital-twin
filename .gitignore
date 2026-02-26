@@ -6,6 +6,15 @@ data/
 !data/core_brain_snapshot.json
 credentials/
 *.brain
+logs/
+
+# Self-build artefacts (Nova may write files to wrong paths)
+.auto-update.lock
+autonomous_agent_improvements.txt
+purpose.txt
+readme.txt
+report.txt
+security_summary.txt
 
 # Environment
 .env

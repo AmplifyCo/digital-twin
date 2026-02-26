@@ -373,6 +373,17 @@ class AutoUpdater:
                     "info"
                 )
 
+                # Reset any local modifications to tracked files before pulling.
+                # Self-build or SCP may have modified tracked files — git is the
+                # source of truth, so we discard local diffs to avoid merge conflicts.
+                dirty = await self.bash_tool.execute(
+                    "git diff --name-only", timeout=5
+                )
+                if dirty.success and dirty.output.strip():
+                    dirty_files = dirty.output.strip().split("\n")
+                    logger.info(f"Resetting {len(dirty_files)} locally modified files before pull: {dirty_files}")
+                    await self.bash_tool.execute("git checkout -- .", timeout=10)
+
                 # Pull the updates
                 result = await self.bash_tool.execute("git pull origin main", timeout=60)
 
