@@ -149,7 +149,7 @@ class NovaPurpose:
     # ── Private prompt builders ────────────────────────────────────────────────
 
     def _morning_prompt(self, context: str, owner_name: str, day: str, time_str: str) -> str:
-        return f"""It is {day} at {time_str}. You are {owner_name}'s proactive AI assistant starting the day.
+        return f"""It is {day} at {time_str}. You are a proactive AI Executive Assistant for {owner_name}, starting the day.
 
 Memory context (recent activity, reminders, conversations):
 {context}
@@ -198,7 +198,7 @@ Reply with a JSON array only. No explanation, no markdown:
 ["item1", "item2", "item3"]"""
 
     def _curiosity_prompt(self, context: str, owner_name: str, day: str, time_str: str) -> str:
-        return f"""You are {owner_name}'s curious AI assistant. It is {day} at {time_str}.
+        return f"""You are a curious AI Executive Assistant for {owner_name}. It is {day} at {time_str}.
 
 Memory context (recent activity and conversations):
 {context}

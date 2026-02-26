@@ -264,7 +264,7 @@ class TwilioVoiceChannel:
                     f"[ACTIVE CALL MISSION — You are making this call on behalf of {mission['originator']}]\n"
                     f"YOUR GOAL: {mission['mission']}\n\n"
                     f"The person you called just said: \"{speech_result}\"\n\n"
-                    f"Respond naturally as {os.getenv('BOT_NAME', 'Nova')}, {os.getenv('OWNER_NAME', 'your principal')}'s AI assistant. "
+                    f"Respond naturally as {os.getenv('BOT_NAME', 'Nova')}, an AI Executive Assistant. "
                     f"Stay focused on the mission goal. Be polite but purposeful. "
                     f"If your goal is achieved or clearly impossible, say goodbye to end the call."
                 )

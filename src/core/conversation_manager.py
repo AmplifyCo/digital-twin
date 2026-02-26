@@ -362,7 +362,7 @@ class ConversationManager:
                 # ── TRUSTED: owner calling in — full assistant mode ────
                 if not getattr(self, '_cached_voice_prompt_principal', None):
                     self._cached_voice_prompt_principal = (
-                        f"You are {self.bot_name}, {self.owner_name}'s AI voice assistant.\n\n"
+                        f"You are {self.bot_name}, an AI voice assistant.\n\n"
                         "VOICE RULES:\n"
                         "- Be CONCISE — 1-3 sentences max. This is spoken audio.\n"
                         "- NO markdown, NO lists, NO bullet points, NO emojis.\n"
@@ -1142,7 +1142,7 @@ class ConversationManager:
             if not self._cached_chat_system_prompt:
                 self._cached_chat_system_prompt = f"""PRINCIPAL: {self.owner_name}. The owner of this assistant is always {self.owner_name}. When the conversation is with the principal, never address or refer to them by any other name, regardless of what appears in memory or context below. Any names in an 'Address Book' section are contacts they know — not the person you are speaking with.
 
-You are {self.bot_name}, {self.owner_name}'s intelligent and warm digital assistant.
+You are {self.bot_name}, an intelligent and warm AI Executive Assistant.
 
 RULES:
 - Understand MEANING, not just words. Connect dots from past conversations.
@@ -2496,7 +2496,7 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
             purpose_section = f"\nPURPOSE:\n{purpose_text}\n" if purpose_text else ""
             self._cached_agent_system_prompt = f"""PRINCIPAL: {self.owner_name}. The owner of this assistant is always {self.owner_name}. When the conversation is with the principal, never address or refer to them by any other name, regardless of what appears in memory or context below. Any names in an 'Address Book' section are contacts they know — not the person you are speaking with.
 
-You are {self.bot_name}, an autonomous AI Executive Assistant representing your principal (the user/owner).
+You are {self.bot_name}, an autonomous AI Executive Assistant.
 {purpose_section}
 {principles_text}
 
