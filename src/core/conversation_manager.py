@@ -171,6 +171,7 @@ class ConversationManager:
         self.episodic_memory: Optional[EpisodicMemory] = None  # event-outcome history for learning
         self.intent_data_collector: Optional[IntentDataCollector] = None  # injected by main.py
         self._current_tone_signal = None  # set per-message by tone analyzer
+        self.critic = None  # CriticAgent for inline content reflection (injected by main.py)
 
         # Context Thalamus: token budgeting and history management
         from src.core.context_thalamus import ContextThalamus
@@ -539,6 +540,13 @@ class ConversationManager:
             self._current_raw_contact = raw_contact or ""  # Raw routing address (e.g. phone number)
             self._progress_callback = progress_callback
 
+            # ── Owner trust: Telegram & WhatsApp are gated by allowed chat IDs,
+            # so messages from these channels ARE from the owner. Allow
+            # irreversible actions (post, tweet, email) to execute inline
+            # instead of forcing background task queue.
+            _trusted_owner_channel = channel in ("telegram", "whatsapp")
+            self.agent.tools.policy_gate.set_owner_mode(_trusted_owner_channel)
+
             # Start periodic updates ONLY if enabled (default: disabled)
             # Enabled for: Telegram, WhatsApp (message editing)
             # Disabled for: Email, SMS (would be spammy)
@@ -613,6 +621,12 @@ class ConversationManager:
                 self._detect_and_store_calibration(message)
                 self._detect_timezone_change(message)
 
+            # ── Correction detection (store user corrections in episodic memory) ─
+            _uid_corr = self._current_user_id or "unknown"
+            _last_resp = self._last_bot_responses.get(_uid_corr, "")
+            if _last_resp:
+                await self._detect_and_store_correction(message, _last_resp)
+
             # Try primary processing with Claude API
             logger.info(f"[{trace_id}] Routing to model...")
             response = await self._process_with_fallback(message)
@@ -665,6 +679,10 @@ class ConversationManager:
             }
             self._conversation_buffers[buffer_key].append(turn)
 
+            # Feed thalamus for importance-weighted history management
+            # Thalamus scores turns and retains important older ones when pruning
+            self.thalamus.manage_history(buffer_key, message, filtered_response)
+
             # Persist to daily log file (chronological, survives restarts)
             self._save_to_daily_log(turn)
 
@@ -686,6 +704,7 @@ class ConversationManager:
 
             elapsed = time.time() - start_time
             logger.info(f"[{trace_id}] Completed in {elapsed:.2f}s | model={self._last_model_used} | channel={channel} | prompt_v={self.PROMPT_VERSION}")
+            self.agent.tools.policy_gate.set_owner_mode(False)
             return filtered_response
 
         except Exception as e:
@@ -701,6 +720,7 @@ class ConversationManager:
                     pass
 
             logger.error(f"Inner processing error: {e}", exc_info=True)
+            self.agent.tools.policy_gate.set_owner_mode(False)
             return "I ran into an issue processing that. Please try again in a moment."
 
     def _is_circuit_open(self) -> bool:
@@ -821,6 +841,216 @@ class ConversationManager:
         "describe", "tell me about", "what is",
     ]
 
+    # ── Persona prompt fragments ─────────────────────────────────────
+    # Injected into system prompt based on task type. Tells the LLM
+    # HOW to approach this specific kind of work.
+    _PERSONAS = {
+        "content_writer": (
+            "PERSONA — CONTENT WRITER:\n"
+            "You are composing public-facing content on behalf of the principal.\n"
+            "• Research the topic first if you lack context — use web_search.\n"
+            "• Write with the principal's authentic voice — professional but human.\n"
+            "• Structure matters: hook → insight → takeaway.\n"
+            "• For LinkedIn: follow the tool's content guide strictly (Unicode bold, no markdown).\n"
+            "• For tweets: be punchy, opinionated, conversation-starting.\n"
+            "• For emails: match the recipient's formality level.\n"
+            "• NEVER publish generic filler. Every sentence must earn its place.\n"
+            "• After drafting, re-read your own output. Would YOU stop scrolling to read this? If not, rewrite the hook.\n"
+        ),
+        "researcher": (
+            "PERSONA — RESEARCHER:\n"
+            "You are conducting research to give the principal actionable intelligence.\n"
+            "• Search multiple sources — don't stop at the first result.\n"
+            "• Cross-reference claims between sources.\n"
+            "• Separate facts from opinions. Cite where you found things.\n"
+            "• Structure output: key findings first, then supporting details.\n"
+            "• If data is conflicting, say so — don't paper over uncertainty.\n"
+            "• End with 'So what?' — what should the principal do with this info?\n"
+        ),
+        "communicator": (
+            "PERSONA — COMMUNICATOR:\n"
+            "You are handling communication on behalf of the principal.\n"
+            "• Match the tone to the relationship (formal for strangers, warm for friends).\n"
+            "• For outbound messages: be clear about purpose, respectful of time.\n"
+            "• For replies: address every point in the original message.\n"
+            "• Proactively look up contact info instead of asking the user.\n"
+            "• Confirm what you did ('Sent email to John') — never leave the user guessing.\n"
+        ),
+        "scheduler": (
+            "PERSONA — SCHEDULER:\n"
+            "You are managing the principal's time and commitments.\n"
+            "• Always check the calendar FIRST before proposing times.\n"
+            "• When creating events, include all details (who, what, where, when).\n"
+            "• For reminders: confirm the exact time and action.\n"
+            "• Protect the principal's time — don't double-book.\n"
+        ),
+        "operator": (
+            "PERSONA — OPERATOR:\n"
+            "You are handling a straightforward task execution.\n"
+            "• Do exactly what was asked — nothing more, nothing less.\n"
+            "• Report results concisely.\n"
+            "• If something fails, diagnose and try an alternative before asking the user.\n"
+        ),
+    }
+
+    def _detect_persona(self, message: str, intent: Dict[str, Any]) -> str:
+        """Detect the appropriate persona for this task based on intent and tools.
+
+        Returns:
+            Persona key from _PERSONAS, or "operator" as default.
+        """
+        tool_hints = intent.get("tool_hints", [])
+        msg_lower = message.lower()
+
+        # Content creation: LinkedIn, X posting, drafting
+        content_tools = {"linkedin", "x_tool"}
+        content_words = {"post", "tweet", "draft", "compose", "write a post", "linkedin", "thought leadership"}
+        if (set(tool_hints) & content_tools) or any(w in msg_lower for w in content_words):
+            return "content_writer"
+
+        # Research: web search, multi-source queries
+        research_words = {"research", "find out", "look into", "compare", "analyze", "what do you know about", "tell me about"}
+        if any(w in msg_lower for w in research_words):
+            return "researcher"
+
+        # Communication: email, whatsapp, phone
+        comm_tools = {"email", "send_whatsapp_message", "make_phone_call"}
+        comm_words = {"email", "text ", "call ", "message ", "reply", "respond to"}
+        if (set(tool_hints) & comm_tools) or any(w in msg_lower for w in comm_words):
+            return "communicator"
+
+        # Scheduling: calendar, reminders
+        sched_tools = {"calendar", "reminder"}
+        sched_words = {"schedule", "calendar", "remind", "meeting", "appointment", "event"}
+        if (set(tool_hints) & sched_tools) or any(w in msg_lower for w in sched_words):
+            return "scheduler"
+
+        return "operator"
+
+    def _content_needs_research(self, message: str, intent: Dict[str, Any]) -> bool:
+        """Detect if content creation needs research first.
+
+        Returns True for topic-based requests ('write about X', 'post about Y').
+        Returns False for exact-text requests ('post this: ...', 'tweet: ...').
+        """
+        msg_lower = message.lower()
+        # Exact content — no research needed
+        exact_patterns = ["post this", "tweet this", "post:", "tweet:", "say this",
+                          "exact text", "use this text", "here's the post", "here's the tweet"]
+        if any(p in msg_lower for p in exact_patterns):
+            return False
+        # Topic-based — needs research
+        topic_patterns = ["write about", "post about", "article about", "thought on",
+                          "thoughts on", "write a post", "linkedin post about",
+                          "tweet about", "share your take", "write something about",
+                          "draft a post about", "create a post about"]
+        return any(p in msg_lower for p in topic_patterns)
+
+    async def _reflect_on_content(self, response: str, intent: Dict[str, Any], message: str) -> str:
+        """Run inline critic on content, refine if below threshold.
+
+        Only triggers for content_writer persona. Fail-open: returns original on any error.
+        Adds ~1-2s latency (one Gemini Flash call for evaluation, one for refinement if needed).
+
+        Args:
+            response: The agent's draft response
+            intent: Parsed intent dict
+            message: Original user message
+
+        Returns:
+            Original response if quality is good, or response with refined content.
+        """
+        if not self.critic:
+            return response
+
+        # Detect platform from tool_hints
+        tool_hints = intent.get("tool_hints", [])
+        if "linkedin" in tool_hints:
+            platform = "LinkedIn"
+        elif "x_tool" in tool_hints:
+            platform = "X/Twitter"
+        elif "email" in tool_hints:
+            platform = "email"
+        else:
+            platform = "social media"
+
+        # Extract the content portion from the response
+        content = self._extract_content_from_proposal(response)
+        if not content or len(content) < 50:
+            # Too short to evaluate meaningfully
+            return response
+
+        goal = intent.get("inferred_task", message)[:300]
+
+        try:
+            result = await self.critic.evaluate_content(
+                goal=goal,
+                content=content,
+                platform=platform,
+            )
+            logger.info(f"Content reflection: score={result.score:.2f} passed={result.passed} ({platform})")
+
+            if result.passed:
+                return response
+
+            # Below threshold — refine once
+            logger.info(f"Content below threshold ({result.score:.2f}), refining. Issues: {result.issues}")
+            refined = await self.critic.refine_content(
+                goal=goal,
+                content=content,
+                hint=result.refinement_hint or "; ".join(result.issues),
+                platform=platform,
+            )
+
+            if not refined:
+                return response
+
+            # Replace the content portion in the response with refined version
+            return response.replace(content, refined)
+
+        except Exception as e:
+            logger.debug(f"Content reflection skipped: {e}")
+            return response
+
+    def _extract_content_from_proposal(self, proposal_text: str) -> str:
+        """Extract the actual post/tweet content from a proposal response.
+
+        Strips the 'Here's a draft:' prefix and 'Shall I post?' suffix.
+        Returns the content body, or '' if extraction fails.
+        """
+        text = proposal_text.strip()
+        if not text:
+            return ""
+
+        # Try to find content between common delimiters
+        # Pattern 1: "---\n{content}\n---"
+        dash_match = re.search(r'---\s*\n(.+?)\n\s*---', text, re.DOTALL)
+        if dash_match:
+            return dash_match.group(1).strip()
+
+        # Pattern 2: Content between "draft:" and "Shall I" / "Want me to" / "Should I"
+        draft_match = re.search(
+            r'(?:draft|here\'s what|here is what|here\'s the|here is the)[^:]*:\s*\n\n(.+?)(?:\n\n(?:Shall I|Want me to|Should I|Would you|Does this|Ready to))',
+            text, re.DOTALL | re.IGNORECASE
+        )
+        if draft_match:
+            return draft_match.group(1).strip()
+
+        # Pattern 3: Everything between first double-newline and last question
+        lines = text.split('\n\n')
+        if len(lines) >= 3:
+            # Skip first block (intro) and last block (question), take middle
+            middle = '\n\n'.join(lines[1:-1])
+            if len(middle) > 50:
+                return middle.strip()
+
+        # Fallback: return everything except first and last lines if long enough
+        all_lines = text.split('\n')
+        if len(all_lines) > 4:
+            return '\n'.join(all_lines[1:-1]).strip()
+
+        return ""
+
     @staticmethod
     def _word_match(keywords, text_lower: str) -> bool:
         """Check if any keyword appears as a whole word/phrase in text.
@@ -912,9 +1142,35 @@ class ConversationManager:
                 base_msg += risk_note
             return base_msg
 
+        # Detect persona early so _build_execution_plan can inject style/research context
+        persona = self._detect_persona(message, intent) if action == "action" else ""
+
+        # Fetch tool performance stats for reasoning context (non-blocking)
+        _tool_perf = {}
+        if self.episodic_memory and action == "action":
+            try:
+                _tool_perf = await self.episodic_memory.get_tool_success_rates()
+            except Exception:
+                pass
+
+        # Pre-flight reasoning for complex tasks (sonnet/quality tier only)
+        _preflight = ""
+        if action == "action":
+            _model_tier = self._get_model_tier(message)
+            if _model_tier in ("sonnet", "quality") and self.gemini_client:
+                brain_ctx = ""
+                if self.brain and hasattr(self.brain, 'get_relevant_context'):
+                    try:
+                        brain_ctx = await self.brain.get_relevant_context(message) or ""
+                    except Exception:
+                        pass
+                _preflight = await self._preflight_reasoning(message, intent, brain_ctx)
+
         # Build enriched execution plan:
         # Intent (what to do) + Tool hints (which tools) + Memory (context) → agent task
-        agent_task = await self._build_execution_plan(intent, message)
+        agent_task = await self._build_execution_plan(
+            intent, message, persona=persona, tool_performance=_tool_perf, preflight=_preflight
+        )
 
         if action == "build_feature":
             # Always use Opus architect
@@ -947,10 +1203,11 @@ class ConversationManager:
         elif action == "action":
             # Explicit or inferred action — needs tools
             model_tier = self._get_model_tier(message)
-            logger.info(f"Action [{model_tier}] - using agent with tools (inferred: {inferred_task or 'direct'})")
+            # persona already detected above for _build_execution_plan
+            logger.info(f"Action [{model_tier}] persona={persona} (inferred: {inferred_task or 'direct'})")
 
-            # Build context-aware system prompt (pass message string, not intent dict)
-            system_prompt = await self._build_system_prompt(message)
+            # Build context-aware system prompt with persona
+            system_prompt = await self._build_system_prompt(message, persona=persona)
 
             # ── Restrictive tool scoping ──────────────────────────────────
             # When intent classifier provides tool_hints, restrict the agent
@@ -960,7 +1217,7 @@ class ConversationManager:
             # NOTE: nova_task is always available so the agent can queue
             # irreversible actions that the policy gate blocks in conversation.
             tool_hints = intent.get("tool_hints", [])
-            _SAFE_READONLY_TOOLS = {"file_operations", "web_search", "web_fetch", "clock", "reminder", "nova_task"}
+            _SAFE_READONLY_TOOLS = {"file_operations", "web_search", "web_fetch", "clock", "reminder", "nova_task", "memory_query"}
             if tool_hints:
                 allowed_tools = list(set(tool_hints) | _SAFE_READONLY_TOOLS)
                 logger.info(f"Tool scope restricted to: {allowed_tools}")
@@ -976,20 +1233,41 @@ class ConversationManager:
                 model_tier=model_tier,
                 allowed_tools=allowed_tools,
             )
+            # ── Reflection: critique content quality before showing user ──
+            if persona == "content_writer" and self.critic:
+                response = await self._reflect_on_content(response, intent, message)
+
             # Check if Nova proposed an action instead of executing it
             # (e.g. "Here's a draft tweet — shall I post it?")
             self._detect_and_store_proposal(response, intent)
             # Learn from action conversations (preferences, calibration, etc.)
             await self._learn_from_conversation(message, response)
+
+            # ── Record episode (non-blocking) — gives Nova memory of outcomes ─
+            if self.episodic_memory:
+                try:
+                    _tool_used = tool_hints[0] if tool_hints else "unknown"
+                    _fail_words = ("failed", "error", "couldn't", "unable", "not found", "no results")
+                    _success = not any(w in response.lower() for w in _fail_words)
+                    await self.episodic_memory.record(
+                        action=inferred_task or message,
+                        outcome=response[:200],
+                        success=_success,
+                        tool_used=_tool_used,
+                        context=message[:100],
+                    )
+                except Exception:
+                    pass  # non-critical
+
             return response
 
         elif action == "question":
-            # Question — use chat with Brain context
-            logger.info("Question - using chat with Brain context")
+            # Question — use chat with Brain context (researcher persona)
+            logger.info("Question - using chat with Brain context (persona=researcher)")
             self._last_model_used = "claude-sonnet-4-5"
 
-            # Build system prompt with message string (not intent dict)
-            system_prompt = await self._build_system_prompt(message)
+            # Build system prompt with researcher persona for deeper answers
+            system_prompt = await self._build_system_prompt(message, persona="researcher")
             
             # Use agent_task (enriched with history) so agent has multi-turn context
             response = await self.agent.run(
@@ -1213,12 +1491,24 @@ RULES:
                     except Exception as e:
                         logger.debug(f"Could not get conversation context: {e}")
 
+            # Inject working memory (tone, calibration, unfinished items)
+            if self.working_memory:
+                wm_ctx = self.working_memory.get_context()
+                if wm_ctx:
+                    brain_context_parts.append(wm_ctx)
+
             # Add Brain context to system prompt (capped to save tokens)
             if brain_context_parts:
                 brain_text = "\n\n".join(brain_context_parts)
                 if len(brain_text) > 1500:
                     brain_text = brain_text[:1500] + "\n[context truncated]"
                 system_prompt += "\n\n" + brain_text
+
+            # Inject tone adaptation from current message
+            if self._current_tone_signal:
+                tone_inst = _tone_analyzer.calibration_instruction(self._current_tone_signal)
+                if tone_inst:
+                    system_prompt += f"\n\nTONE ADAPTATION: {tone_inst}"
 
             # Primary: Gemini Flash via LiteLLM
             if self.gemini_client and self.gemini_client.enabled:
@@ -1515,8 +1805,28 @@ User says "good morning" → none"""
         Returns:
             Formatted conversation history string (last 15 turns for current user)
         """
-        # PRIMARY: Per-user in-memory buffer (instant, correct order, isolated)
+        # PRIMARY: Thalamus-managed history (importance-weighted pruning)
+        # Retains recent turns + high-importance older turns (decisions, corrections, preferences)
         current_user = getattr(self, '_current_user_id', None) or 'default'
+        managed_history = self.thalamus.get_history(current_user)
+
+        if managed_history:
+            history_lines = []
+            for msg in managed_history:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                if role == "user":
+                    user_text = content[:200] + "…" if len(content) > 200 else content
+                    history_lines.append(f"User: {user_text}")
+                elif role == "assistant":
+                    bot_text = content[:600] + "…" if len(content) > 600 else content
+                    history_lines.append(f"{self.bot_name}: {bot_text}")
+            if history_lines:
+                return "\n".join(history_lines)
+
+        # SECONDARY: Per-user in-memory buffer (fallback if thalamus empty)
         user_buffer = self._conversation_buffers.get(current_user)
 
         if user_buffer:
@@ -1526,11 +1836,9 @@ User says "good morning" → none"""
                 user_msg = turn.get("user_message", "")
                 bot_msg = turn.get("assistant_response", "")
                 if user_msg:
-                    # User messages are typically short — just truncate, no Gemini call needed
                     user_text = user_msg[:200] + "…" if len(user_msg) > 200 else user_msg
                     history_lines.append(f"User: {user_text}")
                 if bot_msg:
-                    # Nova responses can be long — summarize with Gemini, cache result
                     if "bot_compressed" not in turn:
                         turn["bot_compressed"] = await self._compress_turn_text(bot_msg, 600)
                     history_lines.append(f"{self.bot_name}: {turn['bot_compressed']}")
@@ -2030,6 +2338,22 @@ Additional Examples for Background:
         if is_decline:
             count = len(pending)
             labels = [p["label"] for p in pending]
+
+            # ── Record rejection in episodic memory (feedback learning) ──
+            if self.episodic_memory:
+                for action in pending:
+                    if action.get("tool_name") in ("linkedin", "x_tool", "email"):
+                        try:
+                            await self.episodic_memory.record(
+                                action="Content rejected by user",
+                                outcome=f"Rejected: {action.get('proposal_text', '')[:150]}",
+                                success=False,
+                                tool_used=action["tool_name"],
+                                context="content_rejected",
+                            )
+                        except Exception:
+                            pass
+
             self.working_memory.clear_pending_actions()
             logger.info(f"User declined {count} pending action(s): {labels}")
             if count == 1:
@@ -2127,6 +2451,35 @@ Additional Examples for Background:
                     model_tier="mid",
                 )
                 results.append(response)
+
+                # ── Store approved content as style example ──────────────
+                if tool_name in ("linkedin", "x_tool") and "success" in response.lower():
+                    if self.brain and hasattr(self.brain, 'learn_communication_style'):
+                        content = self._extract_content_from_proposal(proposal_text)
+                        if content and len(content) > 50:
+                            platform = "linkedin" if tool_name == "linkedin" else "x"
+                            try:
+                                await self.brain.learn_communication_style(
+                                    sample=content,
+                                    context=platform,
+                                )
+                                logger.info(f"Stored approved {platform} post as style example")
+                            except Exception as e:
+                                logger.debug(f"Style example storage skipped: {e}")
+
+                # ── Record approval in episodic memory ───────────────────
+                if self.episodic_memory and tool_name in ("linkedin", "x_tool"):
+                    try:
+                        await self.episodic_memory.record(
+                            action=f"Posted {tool_name} content (user approved)",
+                            outcome=f"Content: {proposal_text[:150]}",
+                            success=True,
+                            tool_used=tool_name,
+                            context="content_approved",
+                        )
+                    except Exception:
+                        pass
+
             except Exception as e:
                 logger.error(f"Failed to execute confirmed action {label}: {e}")
                 results.append(f"Failed to {label}: something went wrong.")
@@ -2217,6 +2570,37 @@ Additional Examples for Background:
                 self.working_memory.set_calibration(directive)
                 logger.info(f"Calibration stored: {directive[:60]}")
                 break
+
+    async def _detect_and_store_correction(self, message: str, last_response: str):
+        """Detect if user is correcting Nova and store in episodic memory.
+
+        Corrections like "no, make it shorter", "that's wrong", "I said X not Y"
+        are stored so future similar tasks benefit from past feedback.
+        """
+        if not self.episodic_memory:
+            return
+
+        correction_signals = [
+            "no,", "no ", "wrong", "that's not", "i said", "i meant",
+            "not what i", "try again", "redo", "rewrite", "too long",
+            "too short", "more detail", "less", "shorter", "longer",
+            "change it to", "make it", "don't ",
+        ]
+        msg_lower = message.strip().lower()
+        if not any(msg_lower.startswith(s) or s in msg_lower for s in correction_signals):
+            return
+
+        try:
+            await self.episodic_memory.record(
+                action="User corrected response",
+                outcome=f"Correction: {message[:200]}",
+                success=False,
+                context=f"Original response was: {last_response[:100]}",
+                tool_used="correction",
+            )
+            logger.info(f"Stored correction: {message[:60]}")
+        except Exception:
+            pass  # non-critical
 
     # ── Timezone travel detection ──────────────────────────────────────────
     _CITY_TO_TZ = {
@@ -2449,7 +2833,60 @@ Additional Examples for Background:
 
         return False
 
-    async def _build_execution_plan(self, intent: Dict[str, Any], message: str) -> str:
+    async def _preflight_reasoning(self, message: str, intent: Dict, brain_context: str) -> str:
+        """Pre-execution reasoning step for complex tasks.
+
+        Calls Gemini Flash to produce a structured thinking plan (KNOW/NEED/APPROACH/RISK)
+        before agent.run(). Injected into the agent task as a "thinking" section so the
+        LLM follows a deliberate plan rather than diving in blind.
+
+        Gate: only for sonnet/quality tier. Skip for flash/haiku.
+        Fail-open: returns "" on any error or timeout.
+        """
+        if not self.gemini_client or not getattr(self.gemini_client, 'enabled', False):
+            return ""
+
+        tool_hints = intent.get("tool_hints", [])
+        tool_str = ", ".join(tool_hints) if tool_hints else "all available tools"
+
+        prompt = (
+            "Before executing this task, reason briefly:\n"
+            "1. KNOW: What do I already know from context? (1-2 sentences)\n"
+            "2. NEED: What information am I missing? (1-2 sentences)\n"
+            "3. APPROACH: Best sequence of actions? (numbered list, 3 max)\n"
+            "4. RISK: What could go wrong? (1 sentence)\n\n"
+            f"Task: {message[:500]}\n"
+            f"Context: {brain_context[:500]}\n"
+            f"Available tools: {tool_str}\n\n"
+            "Respond in the format above. Be concise — this is planning, not execution."
+        )
+
+        try:
+            response = await asyncio.wait_for(
+                self.gemini_client.generate(
+                    prompt=prompt,
+                    system_prompt="You are a task planner. Produce concise pre-flight reasoning.",
+                    max_tokens=300,
+                ),
+                timeout=3.0,  # Hard ceiling — preflight must not slow down UX
+            )
+            text = ""
+            if isinstance(response, str):
+                text = response.strip()
+            elif isinstance(response, dict):
+                text = response.get("text", "").strip()
+            # Sanity: reject if too short or too long
+            if len(text) < 20 or len(text) > 1500:
+                return ""
+            return text
+        except asyncio.TimeoutError:
+            logger.debug("Preflight reasoning timed out — skipping")
+            return ""
+        except Exception as e:
+            logger.debug(f"Preflight reasoning failed — skipping: {e}")
+            return ""
+
+    async def _build_execution_plan(self, intent: Dict[str, Any], message: str, persona: str = "", tool_performance: Optional[Dict] = None, preflight: str = "") -> str:
         """Enrich intent with memory context to build a comprehensive agent task.
 
         Flow: Intent (what) + Tool hints (how) + Memory (who/when/prefs) → enriched task
@@ -2460,6 +2897,7 @@ Additional Examples for Background:
         Args:
             intent: Parsed intent dict (action, inferred_task, tool_hints, _conversation_history)
             message: Original user message
+            persona: Detected persona (used for style injection + research directive)
 
         Returns:
             Enriched task string ready for agent.run()
@@ -2522,6 +2960,84 @@ Additional Examples for Background:
         # NOTE: Brain memory context is injected via _build_system_prompt() — NOT here.
         # Previously this method also called get_relevant_context(), causing duplicate
         # context injection (~3000 extra tokens per agent call). Removed to fix.
+
+        # ── Episodic recall: inject relevant past experiences ─────────────
+        # "Last time I tried X, it failed because Y" — gives agent memory of outcomes
+        if self.episodic_memory:
+            try:
+                episodes = await self.episodic_memory.recall(
+                    query=inferred_task or message, n=3, days_back=30
+                )
+                if episodes:
+                    task += f"\n\n{episodes}"
+            except Exception as e:
+                logger.debug(f"Episodic recall skipped: {e}")
+
+        # ── Style examples: inject principal's past posts for voice matching ─
+        if persona == "content_writer" and self.brain and hasattr(self.brain, 'identity'):
+            try:
+                platform = "linkedin" if "linkedin" in str(tool_hints) else "x" if "x_tool" in str(tool_hints) else "general"
+                style_results = await self.brain.identity.search(
+                    query=f"communication_style {platform} post",
+                    n_results=3,
+                    filter_metadata={"type": "communication_style"}
+                )
+                if style_results:
+                    examples = "\n\n---\n\n".join(r["text"][:500] for r in style_results)
+                    task += (
+                        f"\n\nSTYLE EXAMPLES (principal's actual past {platform} posts — match this voice):\n"
+                        f"{examples}\n\n"
+                        f"Write in THIS style — not generic corporate tone. Match the principal's vocabulary, "
+                        f"sentence structure, and personality."
+                    )
+                    logger.info(f"Injected {len(style_results)} style examples for {platform}")
+            except Exception as e:
+                logger.debug(f"Style example retrieval skipped: {e}")
+
+        # ── Research-before-write: two-phase directive for topic-based content ─
+        if persona == "content_writer" and self._content_needs_research(message, intent):
+            # Prepend research directive — agent already has web_search in allowed_tools
+            research_directive = (
+                "\n\nMANDATORY TWO-PHASE APPROACH:\n"
+                "Phase 1 — RESEARCH: Use web_search to find 2-3 recent, relevant data points "
+                "about the topic. Look for statistics, recent news, expert opinions, or trends.\n"
+                "Phase 2 — COMPOSE: Using the research results, compose the content. "
+                "Every claim must be grounded in what you found. No generic filler.\n"
+            )
+            task += research_directive
+            logger.info("Research-before-write directive injected for topic-based content")
+
+        # ── Strategy recall: proven approaches for similar tasks ─────────
+        if self.episodic_memory:
+            try:
+                strategies = await self.episodic_memory.recall_strategies(
+                    goal=inferred_task or message, n=2
+                )
+                if strategies:
+                    task += f"\n\n{strategies}"
+            except Exception:
+                pass
+
+        # ── Neuro-symbolic reasoning context ─────────────────────────────
+        # Inject structured symbolic signals so LLM reasons WITH rules
+        try:
+            from src.core.brain.reasoning_context import ReasoningContext
+            reasoning_ctx = ReasoningContext.build(
+                tone_signal=self._current_tone_signal,
+                intent=intent,
+                working_memory=self.working_memory,
+                tool_performance=tool_performance,
+                brain_context_len=len(task),
+            )
+            ctx_str = reasoning_ctx.to_prompt()
+            if ctx_str:
+                task += f"\n\n{ctx_str}"
+        except Exception as e:
+            logger.debug(f"Reasoning context skipped: {e}")
+
+        # ── Pre-flight reasoning: structured thinking plan ────────────────
+        if preflight:
+            task += f"\n\nPRE-FLIGHT REASONING (your own analysis — follow this plan):\n{preflight}"
 
         return task
 
@@ -2738,13 +3254,14 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
         self._purpose = ""   # not available — omit gracefully
         return self._purpose
 
-    async def _build_system_prompt(self, query: str = "") -> str:
+    async def _build_system_prompt(self, query: str = "", persona: str = "") -> str:
         """Build system prompt for agent tasks with Brain context.
 
         Static part is cached after first build. Only brain context changes per message.
 
         Args:
             query: Current query for context retrieval
+            persona: Optional persona key (content_writer, researcher, etc.) for task-specific behavior
 
         Returns:
             System prompt string with Brain context
@@ -2805,7 +3322,8 @@ PRIVACY & DISCRETION (CRITICAL):
 - You may share YOUR principal's general availability windows without specifics.
 
 COMMUNICATION:
-- Be EXTREMELY concise — 1-2 sentences for confirmations.
+- Be EXTREMELY concise — 1-2 sentences for confirmations and status updates.
+- EXCEPTION — CONTENT CREATION: When composing LinkedIn posts, tweets, emails, or any public-facing content, write with depth and quality appropriate to the requested length. Do NOT apply the conciseness rule to content — a "long" LinkedIn post should be genuinely long, detailed, and well-structured. Follow the tool's content guide for length tiers.
 - Use tools for facts. NEVER hallucinate.
 - No XML tags, no filler. Plain text or Markdown only.
 - ALWAYS speak in plain, non-technical language — as if talking to a friend, not a developer. Never mention tool names, API calls, bash commands, file operations, URL fetching, or any technical internals in your responses. Instead of "I ran a bash command", say "I checked for you". Instead of "I fetched the URL", say "I looked it up online". Never reveal what tools you used unless the user specifically asks.
@@ -2881,7 +3399,19 @@ SECURITY OVERRIDE:
             if wm_ctx:
                 wm_section = f"\n\n{wm_ctx}"
 
-        return base_prompt + brain_context + wm_section
+        # ── Tone adaptation (shapes response style based on detected emotion) ─
+        tone_section = ""
+        if self._current_tone_signal:
+            tone_inst = _tone_analyzer.calibration_instruction(self._current_tone_signal)
+            if tone_inst:
+                tone_section = f"\n\nTONE ADAPTATION: {tone_inst}"
+
+        # ── Persona section (injected by caller for task-specific behavior) ─
+        persona_section = ""
+        if persona and persona in self._PERSONAS:
+            persona_section = f"\n\n{self._PERSONAS[persona]}"
+
+        return base_prompt + brain_context + wm_section + tone_section + persona_section
 
     # ========================================================================
     # Intent Handlers

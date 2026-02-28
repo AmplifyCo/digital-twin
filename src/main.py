@@ -417,7 +417,10 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 golden_path="./data/golden_intents.json",
             )
             conversation_manager.intent_data_collector = intent_data_collector
-            logger.info("🧠 WorkingMemory + EpisodicMemory + IntentDataCollector wired into ConversationManager")
+            # Wire memory sources into MemoryQueryTool (mid-task active memory reasoning)
+            agent.tools.set_memory_sources(brain=digital_brain, episodic_memory=episodic_memory)
+
+            logger.info("🧠 WorkingMemory + EpisodicMemory + IntentDataCollector + MemoryQueryTool wired")
 
             # Restore timezone override from working memory (persists across restarts)
             if working_memory.timezone_override:
@@ -532,6 +535,9 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 owner_whatsapp_number=_owner_wa,
                 episodic_memory=episodic_memory,
             )
+            # Wire CriticAgent into ConversationManager for inline content reflection
+            conversation_manager.critic = _critic
+
             # Wire template_library into goal_decomposer for reuse on future tasks
             goal_decomposer.template_library = _template_library
             asyncio.create_task(_task_runner.start())

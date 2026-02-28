@@ -40,6 +40,38 @@ Respond ONLY with valid JSON, no markdown, no explanation:
 Score guide: 0.9+ = excellent, 0.75+ = acceptable, below 0.75 = needs improvement.
 Be fair but critical. If the output is reasonable even if imperfect, score ≥ 0.75."""
 
+_CONTENT_CRITIC_PROMPT = """You are a content quality critic. Evaluate this {platform} post.
+
+GOAL: {goal}
+
+CONTENT:
+{content}
+
+Rate on these criteria:
+1. HOOK — Does the first line stop the scroll? (not "I'm excited to share...")
+2. SUBSTANCE — Is there a real insight, not just filler?
+3. STRUCTURE — Hook → insight → takeaway? Readable paragraphs?
+4. VOICE — Does it sound human and authentic, not corporate?
+5. CTA — Does it end strong (question, call to action, memorable line)?
+
+Respond ONLY with valid JSON:
+{{"passed": true_or_false, "score": 0.0_to_1.0, "issues": ["issue1"], "refinement_hint": "one sentence fix"}}
+
+Score guide: 0.9+ = publish-ready, 0.75+ = acceptable, below 0.75 = rewrite needed."""
+
+_CONTENT_REFINE_PROMPT = """You are rewriting a {platform} post to fix specific quality issues.
+
+GOAL: {goal}
+
+ORIGINAL CONTENT:
+{content}
+
+ISSUES FOUND:
+{hint}
+
+Rewrite the content to fix these issues. Keep the same core message but improve quality.
+Return ONLY the improved content — no explanation, no labels, no markdown fences."""
+
 _REFINE_PROMPT = """You are synthesizing the final answer for a completed research task.
 
 GOAL: {goal}
@@ -174,6 +206,91 @@ class CriticAgent:
 
         except Exception as e:
             logger.warning(f"CriticAgent refine error: {e}")
+            return None
+
+    # ── Content-specific evaluation (inline reflection for posts/tweets) ─────
+
+    async def evaluate_content(
+        self,
+        goal: str,
+        content: str,
+        platform: str = "LinkedIn",
+    ) -> CriticResult:
+        """Evaluate content quality for a specific platform.
+
+        Lighter than full task evaluation — focuses on hook, substance, voice.
+        Used by ConversationManager._reflect_on_content() inline before showing user.
+
+        Args:
+            goal: What the user asked for
+            content: The draft content to evaluate
+            platform: "LinkedIn", "X/Twitter", or "email"
+
+        Returns:
+            CriticResult — fail-open on any error.
+        """
+        if not self.gemini_client or not self.gemini_client.enabled:
+            return CriticResult(passed=True, score=1.0)
+
+        prompt = _CONTENT_CRITIC_PROMPT.format(
+            goal=goal[:300],
+            content=content[:2000],
+            platform=platform,
+        )
+
+        try:
+            response = await self.gemini_client.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=512,
+            )
+            text = self._extract_text(response)
+            return self._parse_critic_response(text)
+        except Exception as e:
+            logger.warning(f"CriticAgent evaluate_content error (passing through): {e}")
+            return CriticResult(passed=True, score=1.0)
+
+    async def refine_content(
+        self,
+        goal: str,
+        content: str,
+        hint: str,
+        platform: str = "LinkedIn",
+    ) -> Optional[str]:
+        """Refine content based on critic feedback.
+
+        Args:
+            goal: What the user asked for
+            content: The original draft
+            hint: The refinement_hint from CriticResult
+            platform: Target platform
+
+        Returns:
+            Refined content string, or None if refinement fails.
+        """
+        prompt = _CONTENT_REFINE_PROMPT.format(
+            goal=goal[:300],
+            content=content[:2000],
+            hint=hint,
+            platform=platform,
+        )
+
+        client = self.gemini_client
+        if not client or not client.enabled:
+            return None
+
+        try:
+            response = await client.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+            refined = self._extract_text(response)
+            if refined:
+                logger.info(f"CriticAgent content refinement: {len(refined)} chars (platform={platform})")
+            return refined if refined else None
+        except Exception as e:
+            logger.warning(f"CriticAgent refine_content error: {e}")
             return None
 
     # ── Helpers ───────────────────────────────────────────────────────────────

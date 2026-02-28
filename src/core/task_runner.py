@@ -85,6 +85,28 @@ class TaskRunner:
     def stop(self):
         self._running = False
 
+    # ── Channel-aware notification helper ─────────────────────────────────────
+
+    async def _notify_channel(self, task: Task, message: str):
+        """Send a notification to the same channel the task was initiated from.
+
+        - task.channel == "whatsapp" → WhatsApp
+        - anything else → Telegram
+        """
+        if task.channel == "whatsapp" and self.whatsapp_channel:
+            wa_to = task.user_id if (task.user_id or "").startswith(("whatsapp:", "+")) else self.owner_whatsapp_number
+            if wa_to:
+                try:
+                    await asyncio.to_thread(self.whatsapp_channel.send_message, wa_to, message)
+                    return
+                except Exception as e:
+                    logger.warning(f"WhatsApp notification failed, falling back to Telegram: {e}")
+        # Default: Telegram
+        try:
+            await self.telegram.notify(message, level="info")
+        except Exception as e:
+            logger.warning(f"Telegram notification failed: {e}")
+
     # ── Core execution ────────────────────────────────────────────────────────
 
     async def _process_next_task(self):
@@ -96,12 +118,9 @@ class TaskRunner:
         self._current_task_id = task.id
         logger.info(f"TaskRunner picked up task {task.id}: {task.goal[:60]}")
 
-        # Notify owner on Telegram that the task has started (RISK-O06 — SM-06 gap)
-        try:
-            start_msg = f"🚀 Task started: {self._safe(task.goal, 80)}"
-            await self.telegram.notify(start_msg, level="info")
-        except Exception as e:
-            logger.warning(f"Task-started notification failed: {e}")
+        # Notify owner on the originating channel that the task has started
+        start_msg = f"🚀 Task started: {self._safe(task.goal, 80)}"
+        await self._notify_channel(task, start_msg)
 
         try:
             # Step 1: Fetch tool performance from episodic memory (#4)
@@ -140,8 +159,11 @@ class TaskRunner:
             # Group consecutive parallel subtasks into waves; each sequential subtask
             # is its own wave of size 1.
             waves = self._build_waves(subtasks)
+            replanned = False  # Max 1 replan per task
 
-            for wave_start_idx, wave in waves:
+            wave_idx = 0
+            while wave_idx < len(waves):
+                wave_start_idx, wave = waves[wave_idx]
                 # #3: Continuous authorization — re-check before every wave
                 fresh = self.task_queue.get_task(task.id)
                 if fresh and fresh.status == "failed":
@@ -219,9 +241,7 @@ class TaskRunner:
 
                     if task.notify_on_complete:
                         wave_desc = " | ".join(self._safe(st.description, 40) for st in wave)
-                        await self.telegram.notify(
-                            f"⚡ Running {len(wave)} steps in parallel: {wave_desc}", level="info"
-                        )
+                        await self._notify_channel(task, f"⚡ Running {len(wave)} steps in parallel: {wave_desc}")
 
                     wave_start_ts = datetime.utcnow().isoformat()
                     wave_results = await self._execute_parallel_wave(task, wave, wave_start_idx, all_results)
@@ -279,6 +299,32 @@ class TaskRunner:
                     budget_exceeded = True
                     break
 
+                # ── Observe→Plan→Act→Correct: replan if needed ────────────
+                if not replanned and wave_idx < len(waves) - 1:
+                    # Check if any step in this wave failed
+                    wave_had_failure = any(
+                        r.startswith("Step") and "ERROR:" in r
+                        for r in all_results[-len(wave):]
+                    )
+                    remaining_sts = []
+                    for future_idx in range(wave_idx + 1, len(waves)):
+                        remaining_sts.extend(waves[future_idx][1])
+
+                    if remaining_sts:
+                        revised = await self._replan_between_waves(
+                            task, all_results, remaining_sts, wave_had_failure
+                        )
+                        if revised:
+                            # Rebuild waves from revised subtasks
+                            waves = waves[:wave_idx + 1] + self._build_waves(revised)
+                            num_subtasks = wave_start_idx + len(wave) + len(revised)
+                            replanned = True
+                            await self._notify_channel(
+                                task, "📋 Adjusting plan based on what I've learned so far..."
+                            )
+
+                wave_idx += 1
+
             # Step 3: Critic validation — evaluate quality before delivery
             critic_score = 0.8  # default if critic unavailable
             if self.critic:
@@ -301,6 +347,24 @@ class TaskRunner:
                     await self.template_library.store(task.goal, subtasks, critic_score)
                 except Exception as e:
                     logger.warning(f"Task {task.id}: template store failed: {e}")
+
+            # Step 5: Record winning strategy for future recall (complementary to templates)
+            # Templates cache the DECOMPOSITION, strategies cache the APPROACH (tools, order, what worked)
+            if self.episodic_memory and critic_score >= 0.75:
+                try:
+                    approach = "; ".join(
+                        f"Step {i+1}: {st.description[:80]}"
+                        for i, st in enumerate(subtasks)
+                    )
+                    tools_used = list({t for st in subtasks for t in (st.tool_hints or [])})
+                    await self.episodic_memory.record_strategy(
+                        goal=task.goal,
+                        approach=approach,
+                        tools_used=tools_used,
+                        score=critic_score,
+                    )
+                except Exception:
+                    pass  # non-critical — fail silently
 
             # Step 6: Build summary from results
             summary = self._build_summary(task.goal, all_results)
@@ -410,11 +474,26 @@ class TaskRunner:
         bot_name = os.getenv("BOT_NAME", "Nova")
         owner_name = os.getenv("OWNER_NAME", "User")
 
+        signature = f"{bot_name} — {owner_name}'s AI Assistant"
         task_prompt = (
-            f"IDENTITY: You are {bot_name}, {owner_name}'s AI Executive Assistant.\n"
-            f"When signing off on any content (posts, emails, reports), use: "
-            f"\"{bot_name} — {owner_name}'s AI Executive Assistant\". "
-            f"NEVER use \"[Your Name]\" or \"your AI assistant\".\n\n"
+            f"IDENTITY: You are {bot_name}, {owner_name}'s AI Assistant.\n"
+            f"SIGNATURE RULE (MANDATORY): When signing off on any content "
+            f"(LinkedIn posts, tweets, emails, reports), you MUST sign as:\n"
+            f"  {signature}\n"
+            f"NEVER use placeholders like \"[Your Name]\", \"[Author]\", or generic "
+            f"phrases. The signature above is final — copy it exactly.\n\n"
+            f"CONTENT QUALITY (MANDATORY for LinkedIn/social posts):\n"
+            f"- You are a professional content writer. Write posts that are engaging, "
+            f"insightful, and well-structured.\n"
+            f"- LinkedIn does NOT support markdown. Use Unicode formatting instead:\n"
+            f"  𝗕𝗼𝗹𝗱 (Mathematical Sans-Serif Bold) for headers/key phrases\n"
+            f"  𝘐𝘵𝘢𝘭𝘪𝘤 (Mathematical Sans-Serif Italic) for emphasis\n"
+            f"  • for bullet points, → for arrows, ✦ for highlights\n"
+            f"  ─── for section dividers, ①②③ for numbered lists\n"
+            f"- HOOK FIRST: First line must stop the scroll. Bold claim, question, or stat.\n"
+            f"- Use the post_length parameter: short (1-3 lines), medium (5-10 lines), "
+            f"long (12-25 lines with full structure).\n"
+            f"- Default to 'medium' unless the task specifies otherwise.\n\n"
             f"{context}"
             f"BACKGROUND TASK (ID: {task.id})\n"
             f"Overall goal: {task.goal}\n\n"
@@ -520,18 +599,12 @@ class TaskRunner:
         msg = f"📋 {len(subtasks)} steps: {steps}"
         if irreversible_count:
             msg += f"\n⚠️ {irreversible_count} irreversible step(s) — reply 'stop task' to cancel before they run."
-        try:
-            await self.telegram.notify(msg, level="info")
-        except Exception as e:
-            logger.warning(f"Telegram plan notification failed: {e}")
+        await self._notify_channel(task, msg)
 
     async def _notify_step_start(self, task: Task, step: int, total: int, description: str):
         """Notify that a step is starting."""
         msg = f"🔄 [{step}/{total}] {self._safe(description, 80)}"
-        try:
-            await self.telegram.notify(msg, level="info")
-        except Exception as e:
-            logger.warning(f"Telegram step-start notification failed: {e}")
+        await self._notify_channel(task, msg)
 
     async def _notify_step_done(self, task: Task, step: int, total: int, result: str, failed: bool):
         """Notify step completion with a one-line outcome."""
@@ -539,10 +612,7 @@ class TaskRunner:
             msg = f"❌ [{step}/{total}] {self._safe(result.removeprefix('ERROR:').strip(), 100)}"
         else:
             msg = f"✅ [{step}/{total}] {self._safe(result, 100)}"
-        try:
-            await self.telegram.notify(msg, level="info")
-        except Exception as e:
-            logger.warning(f"Telegram step-done notification failed: {e}")
+        await self._notify_channel(task, msg)
 
     async def _notify_user(self, task: Task, summary: str):
         """Notify user on the SAME channel the task was initiated from.
@@ -653,10 +723,7 @@ class TaskRunner:
             f"⏱ Task budget reached for: {self._safe(task.goal, 60)}\n"
             f"{detail} — stopping here and delivering partial results."
         )
-        try:
-            await self.telegram.notify(msg, level="warning")
-        except Exception as e:
-            logger.warning(f"Budget-exceeded notification failed: {e}")
+        await self._notify_channel(task, msg)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -704,7 +771,7 @@ class TaskRunner:
             f"_Reply 'stop task' to cancel before this runs._"
         )
         try:
-            await self.telegram.notify(msg, level="warning")
+            await self._notify_channel(task, msg)
             # Brief pause to give user a chance to react
             await asyncio.sleep(10)
             # Re-check whether the task was cancelled during the wait
@@ -768,6 +835,92 @@ class TaskRunner:
             return await self._execute_subtask(task, alt_subtask, idx, prior_results)
         except Exception as e:
             logger.warning(f"Adaptive re-delegation failed: {e}")
+            return None
+
+    async def _replan_between_waves(
+        self,
+        task: Task,
+        completed_results: List[str],
+        remaining_subtasks: List[Subtask],
+        wave_had_failure: bool,
+    ) -> Optional[List[Subtask]]:
+        """Re-plan remaining subtasks if intermediate results suggest a pivot.
+
+        Called between waves. Only triggers if:
+        - A subtask in the current wave failed, OR
+        - At least 3 results completed (enough data to judge)
+
+        Returns revised subtask list or None (keep original plan).
+        Max 1 replan per task. Fail-open: any error returns None.
+        """
+        if not wave_had_failure and len(completed_results) < 3:
+            return None
+
+        gemini = getattr(self.agent, "gemini_client", None) if self.agent else None
+        if not gemini or not getattr(gemini, "enabled", False):
+            return None
+
+        remaining_desc = "\n".join(
+            f"  Step: {st.description[:100]}" for st in remaining_subtasks
+        )
+        completed_summary = "\n".join(r[:150] for r in completed_results[-3:])
+
+        prompt = (
+            f"You are re-evaluating a task plan mid-execution.\n\n"
+            f"GOAL: {task.goal[:300]}\n\n"
+            f"COMPLETED SO FAR:\n{completed_summary}\n\n"
+            f"REMAINING PLAN:\n{remaining_desc}\n\n"
+            f"Based on the results so far, should the remaining steps be revised?\n"
+            f"- If the plan is still good, respond with exactly: KEEP_PLAN\n"
+            f"- If the plan needs revision, respond with a JSON array of revised steps.\n"
+            f"  Each step: {{\"description\": \"...\", \"tool_hints\": [...], "
+            f"\"verification_criteria\": \"...\", \"reversible\": true}}\n\n"
+            f"Respond with KEEP_PLAN or JSON array only. No explanation."
+        )
+
+        try:
+            response = await gemini.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=512,
+            )
+            text = self._extract_text_from_response(response).strip()
+
+            if "KEEP_PLAN" in text:
+                logger.info(f"Task {task.id}: replan check — keeping original plan")
+                return None
+
+            # Strip markdown fences
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+                text = text.strip()
+
+            items = json.loads(text)
+            if not isinstance(items, list) or not items:
+                return None
+
+            revised = []
+            for item in items[:5]:  # cap at 5 remaining steps
+                desc = item.get("description", "").strip()
+                if not desc:
+                    continue
+                revised.append(Subtask(
+                    description=desc[:500],
+                    tool_hints=item.get("tool_hints", []),
+                    model_tier=item.get("model_tier", "sonnet"),
+                    verification_criteria=item.get("verification_criteria", "")[:200],
+                    reversible=item.get("reversible", True),
+                    depends_on=[],  # Fresh plan — no cross-dependencies
+                ))
+
+            if revised:
+                logger.info(f"Task {task.id}: replanned — {len(revised)} revised steps")
+                return revised
+            return None
+
+        except Exception as e:
+            logger.debug(f"Task {task.id}: replan failed (keeping original): {e}")
             return None
 
     def _extract_text_from_response(self, response) -> str:

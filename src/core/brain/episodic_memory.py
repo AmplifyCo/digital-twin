@@ -131,6 +131,60 @@ class EpisodicMemory:
             and r["metadata"].get("tool_used") == tool
         ][:n]
 
+    async def record_strategy(
+        self,
+        goal: str,
+        approach: str,
+        tools_used: List[str],
+        score: float,
+    ):
+        """Store a successful strategy for future recall.
+
+        Called by TaskRunner after critic score >= 0.75. Stores the winning
+        approach (not just the decomposition — that's ReasoningTemplateLibrary).
+        This stores HOW it was done: which tools, what order, what worked.
+
+        Only successful strategies are recorded — prevents hallucination loops
+        where the agent remembers and repeats its own failures.
+        """
+        text = (
+            f"Strategy for: {goal[:200]}\n"
+            f"Approach: {approach[:300]}\n"
+            f"Tools: {', '.join(tools_used)}\n"
+            f"Quality: {score:.2f}"
+        )
+        await self.db.store(
+            text=text,
+            metadata={
+                "type": "strategy",
+                "tools": ",".join(tools_used),
+                "score": score,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        logger.debug(f"Recorded strategy for: {goal[:60]} (score={score:.2f})")
+
+    async def recall_strategies(self, goal: str, n: int = 2) -> str:
+        """Recall proven strategies for similar goals.
+
+        Uses vector similarity (OpenAI/HuggingFace embeddings via LanceDB)
+        to find semantically similar strategies, even if keywords differ.
+
+        Returns formatted string for prompt injection, or "".
+        """
+        results = await self.db.search(
+            query=goal,
+            n_results=n,
+            filter_metadata={"type": "strategy"}
+        )
+        if not results:
+            return ""
+
+        lines = ["PROVEN STRATEGIES (from past successes — adapt, don't copy blindly):"]
+        for r in results:
+            lines.append(f"  {r['text'].strip()}")
+        return "\n".join(lines)
+
     async def get_tool_success_rates(self) -> Dict[str, Dict]:
         """Return success rate per tool computed from all recorded episodes.
 

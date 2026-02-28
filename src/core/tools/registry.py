@@ -72,6 +72,10 @@ class ToolRegistry:
         self._register_reminder_tool()
         self._register_contacts_tool()
         self._register_nova_task_tool()  # Background task queue (self-direction)
+        self._register_memory_tool()    # Mid-task memory queries (active reasoning)
+
+        # ── Market Data Tools (always available, no auth) ───────────────────
+        self._register_polymarket_tool()
 
     def register(self, tool: BaseTool):
         """Register a tool.
@@ -468,9 +472,35 @@ class ToolRegistry:
         except Exception as e:
             logger.warning(f"Failed to register NovaTask tool: {e}")
 
+    def _register_polymarket_tool(self):
+        """Register Polymarket tool (read-only, no auth needed)."""
+        try:
+            from .polymarket import PolymarketTool
+            self.register(PolymarketTool())
+            logger.info("📊 Polymarket tool registered")
+        except Exception as e:
+            logger.warning(f"Failed to register Polymarket tool: {e}")
+
+    def _register_memory_tool(self):
+        """Register MemoryQueryTool for mid-task memory access."""
+        try:
+            from .memory_tool import MemoryQueryTool
+            self._memory_tool = MemoryQueryTool()
+            self.register(self._memory_tool)
+            logger.info("🧠 MemoryQuery tool registered")
+        except Exception as e:
+            logger.warning(f"Failed to register MemoryQuery tool: {e}")
+
     def set_task_queue(self, task_queue):
         """Inject task_queue into NovaTaskTool after initialization."""
         tool = self.tools.get("nova_task")
         if tool:
             tool.task_queue = task_queue
             logger.info("🎯 NovaTask tool connected to TaskQueue")
+
+    def set_memory_sources(self, brain=None, episodic_memory=None):
+        """Wire memory sources into MemoryQueryTool (called from main.py after init)."""
+        if hasattr(self, '_memory_tool') and self._memory_tool:
+            self._memory_tool.brain = brain
+            self._memory_tool.episodic_memory = episodic_memory
+            logger.info("🧠 MemoryQuery tool connected to Brain + EpisodicMemory")
