@@ -601,6 +601,12 @@ class ConversationManager:
                 logger.info(f"[{trace_id}] Task interrupt handled")
                 return interrupt_response
 
+            # ── /devops command: bypass intent, route to devops persona ──
+            devops_response = await self._handle_devops_command(message)
+            if devops_response:
+                logger.info(f"[{trace_id}] DevOps command handled")
+                return devops_response
+
             # ── Admin: hot-reload plugins ──────────────────────────────
             reload_response = await self._handle_plugin_reload(message)
             if reload_response:
@@ -896,6 +902,15 @@ class ConversationManager:
             "• Do exactly what was asked — nothing more, nothing less.\n"
             "• Report results concisely.\n"
             "• If something fails, diagnose and try an alternative before asking the user.\n"
+        ),
+        "devops": (
+            "PERSONA — DEVOPS ENGINEER:\n"
+            "You are performing server operations, debugging, and system maintenance.\n"
+            "• For simple checks (disk, memory, logs, process status) — use bash directly.\n"
+            "• For complex multi-step debugging, log correlation, or code fixes — use claude_cli.\n"
+            "• Always show command output to the user — never summarize away the raw data.\n"
+            "• Diagnose first, then propose a fix. Never apply destructive fixes without stating what you will do.\n"
+            "• Security: never expose credentials, tokens, or .env contents in responses.\n"
         ),
     }
 
@@ -2179,6 +2194,61 @@ Additional Examples for Background:
         r"\brefresh\s+tool",
         r"\bhot[\s-]?reload",
     ]
+
+    async def _handle_devops_command(self, message: str) -> Optional[str]:
+        """Handle /devops command — bypass intent classification, route to devops persona.
+
+        Strips the /devops prefix, builds a devops-persona system prompt,
+        and runs the agent with bash + file_operations + claude_cli tools.
+        Returns response string if handled, None otherwise.
+        """
+        msg_stripped = message.strip()
+        if not msg_stripped.lower().startswith("/devops"):
+            return None
+
+        # Extract the actual command after /devops
+        command_text = msg_stripped[len("/devops"):].strip()
+        if not command_text:
+            return (
+                "Usage: /devops <command>\n\n"
+                "Examples:\n"
+                "  /devops check disk space\n"
+                "  /devops why did Nova crash last night\n"
+                "  /devops show last 50 lines of logs\n"
+                "  /devops install package requests\n"
+                "  /devops diagnose high memory usage"
+            )
+
+        logger.info(f"DevOps command received: {command_text}")
+
+        # Build system prompt with devops persona
+        system_prompt = await self._build_system_prompt(command_text, persona="devops")
+
+        # Devops tool scope: bash + file_operations + claude_cli + safe readonly
+        allowed_tools = [
+            "bash", "file_operations", "claude_cli",
+            "web_search", "web_fetch", "clock", "memory_query",
+        ]
+
+        agent_task = (
+            f"DEVOPS REQUEST from the principal:\n{command_text}\n\n"
+            f"You have access to bash, file_operations, and claude_cli tools.\n"
+            f"For simple commands, use bash directly.\n"
+            f"For complex multi-step analysis, delegate to claude_cli.\n"
+            f"Always show relevant output."
+        )
+
+        try:
+            response = await self.agent.run(
+                task=agent_task,
+                system_prompt=system_prompt,
+                model_tier="sonnet",
+                allowed_tools=allowed_tools,
+            )
+            return response
+        except Exception as e:
+            logger.error(f"DevOps command failed: {e}", exc_info=True)
+            return f"DevOps command failed: {e}"
 
     async def _handle_plugin_reload(self, message: str) -> Optional[str]:
         """Handle 'reload plugins' admin command.

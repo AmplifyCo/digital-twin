@@ -1,0 +1,15 @@
+{
+    "name": "claude_cli",
+    "version": "1.0",
+    "description": "Invoke Claude CLI for complex devops and debugging tasks",
+    "class_name": "ClaudeCliTool",
+    "module_file": "tool.py",
+    "risk_map": {
+        "_default": "write"
+    },
+    "env_vars": [],
+    "constructor_args": {},
+    "safe_readonly": false,
+    "persona": "devops",
+    "dependencies": []
+}
